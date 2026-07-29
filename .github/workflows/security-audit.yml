@@ -2,9 +2,17 @@ name: CoreCheck DevSecOps Security Audit
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, master ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 1' # Monitoreo semanal (Lunes 00:00 UTC)
+
+# 🔑 SOLUCIÓN AL WARNING DE PERMISOS (Líneas 11 y 13 de la captura)
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
   audit:
@@ -12,27 +20,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: 1. Checkout del código
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: 2. Configurar Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
-      - name: Install Dependencies
+      - name: 3. Instalar dependencias
         run: npm ci
 
-      - name: Install Playwright Browsers
+      - name: 4. Instalar navegadores de Playwright
         run: npx playwright install --with-deps chromium
 
-      - name: Execute CoreCheck Audit Engine
-        run: npx ts-node src/cli.ts --url http://localhost:3000 --sarif ./audit-results/results.sarif
-        continue-on-error: true
+      - name: 5. Ejecutar Motor CoreCheck
+        run: npx tsx src/cli.ts
 
-      - name: Upload SARIF report to GitHub Security Tab
-        uses: github/codeql-action/upload-sarif@v3
+      - name: 6. Subir Artefactos (ZIP con reportes JSON & SARIF para descarga)
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          sarif_file: ./audit-results/results.sarif
-          category: CoreCheck-Security
+          name: corecheck-audit-results
+          path: audit-results/
+
+      # 🔑 SOLUCIÓN AL RUTA DE ARCHIVO SARIF Y VERSIÓN V4 (Líneas 10 y 12 de la captura)
+      - name: 7. Subir reporte SARIF a la Pestaña de Seguridad de GitHub
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'audit-results' # Apunta a la carpeta base contenedora de reportes
