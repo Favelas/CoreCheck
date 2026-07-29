@@ -1,0 +1,38 @@
+name: CoreCheck DevSecOps Security Audit
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  audit:
+    name: Execute CoreCheck Active Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Execute CoreCheck Audit Engine
+        run: npx ts-node src/cli.ts --url http://localhost:3000 --sarif ./audit-results/results.sarif
+        continue-on-error: true
+
+      - name: Upload SARIF report to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ./audit-results/results.sarif
+          category: CoreCheck-Security
