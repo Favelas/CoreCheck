@@ -48,7 +48,7 @@ export class AuditRunner {
       while (attempt <= this.options.maxRetries! && !navigationSuccess) {
         try {
           attempt++;
-          await page.goto(this.options.targetUrl, { waitUntil: 'domcontentloaded' });
+          await page.goto(this.options.targetUrl, { waitUntil: 'networkidle' });
           navigationSuccess = true;
         } catch (error) {
           if (attempt > this.options.maxRetries!) {
@@ -89,21 +89,44 @@ export class AuditRunner {
   }
 
   private async generateReports(findings: AuditFinding[]): Promise<void> {
-    const timestamp = new Date().toISOString().replace(/:/g, '-');
-    const baseDir = `./audit-results/${timestamp}`;
-
-    await fs.mkdir(baseDir, { recursive: true });
-
-    if (this.options.outputFormats.includes('json')) {
-      await fs.writeFile(
-        `${baseDir}/report.json`,
-        JSON.stringify({ target: this.options.targetUrl, timestamp, findings }, null, 2),
-        'utf-8'
-      );
-    }
-
-    if (this.options.outputFormats.includes('sarif')) {
-      await exportToSarif(findings, `${baseDir}/results.sarif`);
-    }
+  // 1. Extraer el nombre/dominio del sitio web (ej. "automationexercise.com" o "saucedemo.com")
+  let domainSlug = 'target';
+  try {
+    const parsedUrl = new URL(this.options.targetUrl);
+    domainSlug = parsedUrl.hostname.replace(/^www\./, ''); // Quita el 'www.' si existe
+  } catch {
+    domainSlug = this.options.targetUrl.replace(/[^a-zA-Z0-9]/g, '_');
   }
+
+  // 2. Obtener la hora local formateada (Año-Mes-Día_Hora-Minuto-Segundo)
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  
+  const year = now.getFullYear();
+  const month = pad(now.getMonth() + 1);
+  const day = pad(now.getDate());
+  const hours = pad(now.getHours());
+  const minutes = pad(now.getMinutes());
+  const seconds = pad(now.getSeconds());
+
+  const localTimestamp = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+
+  // 3. Crear el nombre de la carpeta identificable: [dominio]_[fecha_hora_local]
+  const folderName = `${domainSlug}_${localTimestamp}`;
+  const baseDir = `./audit-results/${folderName}`;
+
+  await fs.mkdir(baseDir, { recursive: true });
+
+  if (this.options.outputFormats.includes('json')) {
+    await fs.writeFile(
+      `${baseDir}/report.json`,
+      JSON.stringify({ target: this.options.targetUrl, timestamp: localTimestamp, findings }, null, 2),
+      'utf-8'
+    );
+  }
+
+  if (this.options.outputFormats.includes('sarif')) {
+    await exportToSarif(findings, `${baseDir}/results.sarif`);
+  }
+}
 }

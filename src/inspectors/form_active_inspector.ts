@@ -1,4 +1,4 @@
-import { Page, Request, Response } from 'playwright';
+import { Page, Response } from 'playwright';
 import { AuditFinding } from '../types/audit';
 
 export class FormActiveInspector {
@@ -10,6 +10,9 @@ export class FormActiveInspector {
   }
 
   public async executeActiveFuzzing(): Promise<AuditFinding[]> {
+    // Esperar a que al menos un input o formulario esté presente
+    await this.page.waitForSelector('input, textarea, form', { timeout: 10000 }).catch(() => {});
+
     const inputs = await this.page.locator('input:not([type="hidden"]), textarea').all();
 
     for (let i = 0; i < inputs.length; i++) {
@@ -18,79 +21,107 @@ export class FormActiveInspector {
       if (!isVisible) continue;
 
       const selector = await input.evaluate((el) => {
-        return el.id ? `#${el.id}` : el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : el.tagName.toLowerCase();
+        const id = el.id ? `#${el.id}` : '';
+        const name = el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : '';
+        const placeholder = el.getAttribute('placeholder') ? `[placeholder="${el.getAttribute('placeholder')}"]` : '';
+        return id || name || placeholder || el.tagName.toLowerCase();
       });
 
-      // Vector 1: Testing Stored/Reflected XSS Active Injection
-      await this.testXSSInjection(input, selector);
+      // Verification 1: Structural Defenses (Missing MaxLength)
+      const hasMaxLength = await input.getAttribute('maxlength');
+      if (!hasMaxLength) {
+        this.findings.push({
+          id: `MAXLENGTH-MISSING-${Date.now()}-${i}`,
+          ruleId: 'SEC-DOM-NO-MAXLENGTH',
+          title: 'Ausencia de Atributo HTML maxlength en Campo de Entrada',
+          severity: 'LOW',
+          description: `El campo \`${selector}\` no limita la entrada de caracteres en el DOM nativo. Confía exclusivamente en validaciones de JavaScript/Backend.`,
+          evidence: {
+            selector,
+            snippet: await input.evaluate((el: HTMLElement) => el.outerHTML).catch(() => '')
+          },
+          remediation: {
+            explanation: 'Declare el atributo `maxlength` explícitamente en el elemento HTML para evitar desbordamientos de buffers visuales en cliente.',
+            codeBefore: `<input type="text" name="username" />`,
+            codeAfter: `<input type="text" name="username" maxlength="50" />`
+          },
+          standards: {
+            owasp: ['A04:2021-Insecure Design'],
+            cwe: ['CWE-20']
+          }
+        });
+      }
 
-      // Vector 2: Boundary / Integer Overflow Stress
-      await this.testBoundaryStress(input, selector);
+      // Verification 2: Active Fuzzing Testing (XSS & Stress)
+      await this.testXSSInjection(input, selector);
     }
 
     return this.findings;
   }
 
   private async testXSSInjection(inputLocator: any, selector: string): Promise<void> {
-    const xssPayload = `"><img src=x onerror="window.__corecheck_xss_triggered=true">`;
-    let networkErrorDetected = false;
+    const xssPayload = `"><img src=x onerror="window.__corecheck_xss=true">`;
+    let network500Detected = false;
 
-    // Escuchar respuestas de red para capturar fallos 500
-    const responseHandler = (response: Response) => {
+    const responseListener = (response: Response) => {
       if (response.status() >= 500) {
-        networkErrorDetected = true;
+        network500Detected = true;
       }
     };
 
-    this.page.on('response', responseHandler);
+    this.page.on('response', responseListener);
 
     try {
+      // Limpiar e inyectar el payload simulando eventos de React/Vue
+      await inputLocator.focus();
       await inputLocator.fill(xssPayload);
-      await inputLocator.press('Tab'); // Trigger blur & validation events
+      await inputLocator.dispatchEvent('input');
+      await inputLocator.dispatchEvent('change');
+      await inputLocator.press('Tab'); // Trigger blur event
 
-      // Evaluar si el payload ejecutó JS dentro del contexto
-      const isXSSExecuted = await this.page.evaluate(() => (window as any).__corecheck_xss_triggered === true);
+      await this.page.waitForTimeout(500); // Dar tiempo al SPA/Framework a procesar
 
-      if (isXSSExecuted) {
+      const isXssTriggered = await this.page.evaluate(() => (window as any).__corecheck_xss === true).catch(() => false);
+
+      if (isXssTriggered) {
         this.findings.push({
-          id: `XSS-ACTIVE-${Date.now()}`,
+          id: `XSS-TRIGGERED-${Date.now()}`,
           ruleId: 'SEC-XSS-ACTIVE-INJECTION',
-          title: 'Cross-Site Scripting (XSS) Reflejado/Activo detectado en tiempo de ejecución',
+          title: 'Vulnerabilidad Ejecutable XSS Reflejado en Cliente',
           severity: 'CRITICAL',
-          description: `El campo ${selector} no sanitizó correctamente el payload e intentó interpretar atributos de eventos HTML inline.`,
+          description: `El campo \`${selector}\` interpretó y ejecutó etiquetas scripts/eventos inline inyectados.`,
           evidence: {
             selector,
-            requestPayload: xssPayload,
-            snippet: await inputLocator.evaluate((el: HTMLElement) => el.outerHTML)
+            requestPayload: xssPayload
           },
           remediation: {
-            explanation: 'Sanitice toda entrada de usuario en el servidor usando context-aware encoding y aplique Content Security Policy (CSP) con nonces.',
-            codeBefore: `element.innerHTML = userInput;`,
-            codeAfter: `element.textContent = userInput;`
+            explanation: 'Sanitice las entradas antes de inyectarlas en el DOM y aplique Content Security Policy (CSP).',
+            codeBefore: `element.innerHTML = input;`,
+            codeAfter: `element.textContent = input;`
           },
           standards: {
-            owasp: ['A03:2021-Injection', 'OWASP-WSTG-INPV-01'],
+            owasp: ['A03:2021-Injection'],
             cwe: ['CWE-79']
           }
         });
       }
 
-      if (networkErrorDetected) {
+      if (network500Detected) {
         this.findings.push({
-          id: `ERR-500-${Date.now()}`,
-          ruleId: 'SEC-UNHANDLED-INPUT-EXCEPTION',
-          title: 'Excepción No Controlada en Servidor (HTTP 500) tras Fuzzing',
+          id: `SERVER-ERROR-500-${Date.now()}`,
+          ruleId: 'SEC-UNHANDLED-EXCEPTION',
+          title: 'Excepción Interna del Servidor (HTTP 500) tras Fuzzing',
           severity: 'HIGH',
-          description: `El envío de caracteres especiales en el campo ${selector} provocó un colapso en el backend.`,
+          description: `El envío de caracteres sintácticos en el campo \`${selector}\` provocó un fallo no controlado en el servidor.`,
           evidence: {
             selector,
             requestPayload: xssPayload,
             responseStatus: 500
           },
           remediation: {
-            explanation: 'Implemente un middleware global de manejo de excepciones e impulse la validación estricta de esquemas de entrada (DTOs).',
-            codeBefore: `app.post('/api', (req, res) => { process(req.body); });`,
-            codeAfter: `app.post('/api', validateDTO(Schema), (req, res, next) => { try { process(req.body); } catch(e) { next(e); } });`
+            explanation: 'Implemente middlewares de validación de esquemas (DTOs) para filtrar entradas anómalas antes de procesarlas.',
+            codeBefore: `app.post('/login', (req, res) => { ... });`,
+            codeAfter: `app.post('/login', validateDTO(LoginSchema), (req, res) => { ... });`
           },
           standards: {
             owasp: ['A05:2021-Security Misconfiguration'],
@@ -98,45 +129,10 @@ export class FormActiveInspector {
           }
         });
       }
-    } catch (error) {
-      // Manejo silencioso para no interrumpir el flujo si el elemento fue destruido dinámicamente
-    } finally {
-      this.page.off('response', responseHandler);
-    }
-  }
-
-  private async testBoundaryStress(inputLocator: any, selector: string): Promise<void> {
-    const massivePayload = 'A'.repeat(5000);
-
-    try {
-      const startTime = Date.now();
-      await inputLocator.fill(massivePayload);
-      const duration = Date.now() - startTime;
-
-      if (duration > 2000) {
-        this.findings.push({
-          id: `PERF-FREEZE-${Date.now()}`,
-          ruleId: 'UX-UI-THREAD-FREEZE',
-          title: 'Congelamiento del Hilo Principal de UI (Client-Side DoS)',
-          severity: 'MEDIUM',
-          description: `La inserción de 5,000 caracteres en ${selector} bloqueó el hilo de renderizado durante ${duration}ms.`,
-          evidence: {
-            selector,
-            snippet: `Tiempo de bloqueo: ${duration}ms`
-          },
-          remediation: {
-            explanation: 'Limite la longitud de entrada mediante el atributo `maxlength` e implemente debounce en los event listeners.',
-            codeBefore: `<input type="text" onChange={handleChange} />`,
-            codeAfter: `<input type="text" maxLength={255} onChange={debouncedHandleChange} />`
-          },
-          standards: {
-            owasp: ['A04:2021-Insecure Design'],
-            cwe: ['CWE-400']
-          }
-        });
-      }
     } catch (e) {
-      // Captura segura
+      // Ignorar excepciones de elementos desmontados dinámicamente
+    } finally {
+      this.page.off('response', responseListener);
     }
   }
 }
