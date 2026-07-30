@@ -15,23 +15,24 @@ export class ConsoleDataInspector {
     const findings: AuditFinding[] = [];
 
     try {
-      const storageDump = await this.page.evaluate(() => {
-        const extract = (storage: Storage) => {
-          const items: { key: string; value: string }[] = [];
+      // Evaluamos como un script de texto puro para evitar que esbuild inyecte el helper '__name'
+      const storageDump = await this.page.evaluate(`(() => {
+        const getItems = (storage) => {
+          const items = [];
           for (let i = 0; i < storage.length; i++) {
             const key = storage.key(i);
             if (key) {
-              items.push({ key, value: storage.getItem(key) || '' });
+              items.push({ key: key, value: storage.getItem(key) || '' });
             }
           }
           return items;
         };
 
         return {
-          local: extract(localStorage),
-          session: extract(sessionStorage)
+          local: getItems(window.localStorage),
+          session: getItems(window.sessionStorage)
         };
-      });
+      })()`) as { local: { key: string; value: string }[]; session: { key: string; value: string }[] };
 
       // Patrones de búsqueda de información sensible (Tokens, Keys, PII)
       const jwtPattern = /^eyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$/;

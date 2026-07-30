@@ -1,6 +1,7 @@
 import { chromium, Browser } from 'playwright';
-import { AuditExecutionOptions, AuditFinding, OutputFormat } from '../types/audit';
+import { AuditExecutionOptions, AuditFinding, FindingLocation, OutputFormat } from '../types/audit';
 import { FormActiveInspector } from '../inspectors/form_active_inspector';
+import { FuzzingInspector } from '../inspectors/fuzzing_inspector';
 import { ConsoleDataInspector } from '../inspectors/console_data_inspector';
 import { VisualMetaInspector } from '../inspectors/visual_meta_inspector';
 import { HeadersConfigInspector } from '../inspectors/headers_config_inspector';
@@ -29,19 +30,28 @@ export class AuditRunner {
     let browser: Browser | null = null;
     const allFindings: AuditFinding[] = [];
 
-    // Derivar directorio de salida desde el inicio para evitar errores de ámbito
+    // Derivar directorio de salida desde el inicio
     const baseDir = this.getOutputDir();
     await fs.mkdir(baseDir, { recursive: true });
 
     try {
       browser = await chromium.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-blink-features=AutomationControlled'
+        ]
       });
 
-      const contextOptions = this.options.storageStatePath
-        ? { storageState: this.options.storageStatePath }
-        : {};
+      const contextOptions = {
+        ...(this.options.storageStatePath ? { storageState: this.options.storageStatePath } : {}),
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        viewport: { width: 1280, height: 720 },
+        deviceScaleFactor: 1,
+        isMobile: false,
+        hasTouch: false
+      };
 
       const context = await browser.newContext(contextOptions);
       const page = await context.newPage();
@@ -52,7 +62,7 @@ export class AuditRunner {
       const consoleInspector = new ConsoleDataInspector(page);
       const visualMetaInspector = new VisualMetaInspector(page);
 
-      // 🛡️ 1. Navegación Estricta con Verificación de Renderizado
+      // 🛡️ 1. Navegación Estricta con Verificación de Renderizado y Resiliencia anti-WAF
       let navigationSuccess = false;
       let attempt = 0;
 
@@ -60,14 +70,17 @@ export class AuditRunner {
         try {
           attempt++;
 
-          // Esperar la carga inicial del DOM
+          // Usar 'commit' para capturar la respuesta inicial sin bloquearse en WebSockets/Assets pesados
           await page.goto(this.options.targetUrl, {
-            waitUntil: 'domcontentloaded',
+            waitUntil: 'commit',
             timeout: this.options.timeoutMs
           });
 
           // Esperar a que la estructura base del DOM esté renderizada
           await page.waitForSelector('body', { timeout: 10000 });
+
+          // Esperar brevemente para hidratación de frameworks como Vue/React/Angular
+          await page.waitForSelector('input, form, button, #app, #root', { timeout: 5000 }).catch(() => {});
 
           navigationSuccess = true;
         } catch (error) {
@@ -81,9 +94,9 @@ export class AuditRunner {
 
       // 🚨 Guardia de Seguridad: Validar si la página realmente renderizó elementos interactivos o contenido
       const isPageRendered = await page.evaluate(() => {
-        const hasInputs = document.querySelectorAll('input, button, form, textarea').length > 0;
+        const hasInputs = document.querySelectorAll('input, button, form, textarea, a').length > 0;
         const bodyText = document.body ? document.body.innerText.trim().length : 0;
-        return hasInputs || bodyText > 50;
+        return hasInputs || bodyText > 30;
       }).catch(() => false);
 
       // Si la página falló en cargar o quedó en blanco, REGISTRAR HALLAZGO CRÍTICO y abortar
@@ -129,9 +142,14 @@ export class AuditRunner {
       // -----------------------------------------------------------------------
       const inspectorTasks: Promise<AuditFinding[]>[] = [];
 
+      // 🟠 NIVEL 3: ASVS V3 — Auditoría Estructural de Formularios y CSRF
+      const formInspector = new FormActiveInspector(page);
+      inspectorTasks.push(formInspector.executeActiveFuzzing());
+
+      // 🔴 NIVEL 4: ASVS V5 — Fuzzing Activo de Inyecciones (XSS, SQLi & Resiliencia)
       if (this.options.activeFuzzing) {
-        const activeInspector = new FormActiveInspector(page);
-        inspectorTasks.push(activeInspector.executeActiveFuzzing());
+        const fuzzingInspector = new FuzzingInspector(page);
+        inspectorTasks.push(fuzzingInspector.executeFuzzing());
       }
 
       // 🟡 NIVEL 2: ASVS V2/V3 — Inspección de Web Storage (Tokens, JWT, Secrets)
@@ -173,15 +191,83 @@ export class AuditRunner {
         }
       });
 
-      // Consolidación y exportación de reportes finales
-      await this.generateReports(allFindings, baseDir);
+      // 🧹 Consolidación y deduplicación de hallazgos por regla
+      const deduplicatedFindings = this.deduplicateFindings(allFindings);
 
-      return allFindings;
+      // Exportación de reportes finales
+      await this.generateReports(deduplicatedFindings, baseDir);
+
+      return deduplicatedFindings;
     } finally {
       if (browser) {
         await browser.close();
       }
     }
+  }
+
+  /**
+   * Agrupa los hallazgos que comparten el mismo ruleId consolidando sus ubicaciones/evidencias.
+   */
+  private deduplicateFindings(findings: AuditFinding[]): AuditFinding[] {
+    const groupedMap = new Map<string, AuditFinding>();
+
+    for (const finding of findings) {
+      const key = finding.ruleId;
+
+      const currentLocation: FindingLocation = {
+        selector: finding.evidence.selector,
+        snippet: finding.evidence.snippet
+      };
+
+      if (!groupedMap.has(key)) {
+        // Primera ocurrencia de la regla
+        const locations: FindingLocation[] = [];
+        if (currentLocation.selector || currentLocation.snippet) {
+          locations.push(currentLocation);
+        }
+
+        groupedMap.set(key, {
+          ...finding,
+          evidence: {
+            ...finding.evidence,
+            ...(locations.length > 0 ? { locations } : {})
+          }
+        });
+      } else {
+        // Regla repetida: agregar la ubicación a la lista consolidada
+        const existingFinding = groupedMap.get(key)!;
+
+        if (!existingFinding.evidence.locations) {
+          existingFinding.evidence.locations = [];
+          // Si el primer hallazgo guardó selector/snippet plano, moverlo a locations
+          if (existingFinding.evidence.selector || existingFinding.evidence.snippet) {
+            existingFinding.evidence.locations.push({
+              selector: existingFinding.evidence.selector,
+              snippet: existingFinding.evidence.snippet
+            });
+          }
+        }
+
+        if (currentLocation.selector || currentLocation.snippet) {
+          existingFinding.evidence.locations.push(currentLocation);
+        }
+      }
+    }
+
+    // Actualizar títulos e información situacional para reglas con múltiples ocurrencias
+    return Array.from(groupedMap.values()).map((finding) => {
+      const locationsCount = finding.evidence.locations?.length || 0;
+
+      if (locationsCount > 1) {
+        return {
+          ...finding,
+          title: `${finding.title} (${locationsCount} elementos detectados)`,
+          description: `${finding.description} Se identificaron un total de ${locationsCount} ocurrencias en el DOM.`
+        };
+      }
+
+      return finding;
+    });
   }
 
   private getOutputDir(): string {
