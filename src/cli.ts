@@ -9,10 +9,10 @@ const TARGET_SITES = [
 ];
 
 (async () => {
-  console.log('🚀 [CoreCheck DevSecOps] Iniciando auditoría activa de alta precisión...\n');
+  console.log('🚀 [CoreCheck DevSecOps Engine 2.5] Iniciando auditoría activa de alta precisión...\n');
 
   for (const url of TARGET_SITES) {
-    console.log(`🔍 [Audit Target] Ejecutando inspección y fuzzing en: ${url}`);
+    console.log(`🔍 [Audit Target] Ejecutando inspección, fuzzing y captura de evidencia en: ${url}`);
 
     const options: AuditExecutionOptions = {
       targetUrl: url,
@@ -33,5 +33,5 @@ const TARGET_SITES = [
     }
   }
 
-  console.log('📊 [Reportes Generados] Revisa la carpeta ./audit-results/ para consultar los archivos .json y .sarif.');
+  console.log('📊 [Reportes Generados] Revisa la carpeta ./audit-results/ para consultar los archivos .json, .sarif y screenshots.');
 })();
