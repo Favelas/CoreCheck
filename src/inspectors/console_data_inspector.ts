@@ -1,5 +1,5 @@
 import { Page } from 'playwright';
-import { AuditFinding } from '../types/audit';
+import { AuditFinding } from '../types/audit.js';
 
 export class ConsoleDataInspector {
   private page: Page;

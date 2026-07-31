@@ -1,6 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { AuditFinding, SeverityLevel } from '../types/audit';
+import { AuditFinding, SeverityLevel } from '../types/audit.js';
 
 function mapSeverityToSarifLevel(severity: SeverityLevel): 'error' | 'warning' | 'note' {
   switch (severity) {

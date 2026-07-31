@@ -1,5 +1,5 @@
-import { Page, Response } from 'playwright';
-import { AuditFinding } from '../types/audit';
+import { Page } from 'playwright';
+import { AuditFinding } from '../types/audit.js';
 
 export class FormActiveInspector {
   private page: Page;
@@ -74,9 +74,8 @@ export class FormActiveInspector {
 
       const inputType = (await input.getAttribute('type').catch(() => 'text') || 'text').toLowerCase();
       const inputNameAttr = (await input.getAttribute('name').catch(() => '')) || '';
-      const inputIdAttr = (await input.getAttribute('id').catch(() => '')) || '';
 
-      const selector = await input.evaluate((el) => {
+      const selector = await input.evaluate((el: Element) => {
         const id = el.id ? `#${el.id}` : '';
         const name = el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : '';
         return id || name || el.tagName.toLowerCase();
@@ -187,11 +186,6 @@ export class FormActiveInspector {
             standards: { owasp: ['A04:2021-Insecure Design'], cwe: ['CWE-20'] }
           });
         }
-      }
-
-      // 2.6 Pruebas Activas de Fuzzing (Solo para inputs interactivos de texto/textarea)
-      if (['text', 'search', 'url', 'textarea'].includes(inputType) || !inputType) {
-        await this.executePayloadFuzzing(input, selector);
       }
     }
 
@@ -334,94 +328,5 @@ export class FormActiveInspector {
     }
 
     return this.findings;
-  }
-
-  private async executePayloadFuzzing(inputLocator: any, selector: string): Promise<void> {
-    const fuzzPayloads = [
-      {
-        type: 'XSS',
-        ruleId: 'SEC-XSS-ACTIVE-INJECTION',
-        value: `"><img src=x onerror="window.__corecheck_xss=true">`,
-        severity: 'CRITICAL' as const,
-        owasp: ['A03:2021-Injection'],
-        cwe: ['CWE-79']
-      },
-      {
-        type: 'SQLi',
-        ruleId: 'SEC-SQLI-SPECIAL-CHARS',
-        value: `' OR '1'='1' -- `,
-        severity: 'HIGH' as const,
-        owasp: ['A03:2021-Injection'],
-        cwe: ['CWE-89']
-      }
-    ];
-
-    for (const payload of fuzzPayloads) {
-      let network500Detected = false;
-      const responseListener = (response: Response) => {
-        if (response.status() >= 500) {
-          network500Detected = true;
-        }
-      };
-
-      this.page.on('response', responseListener);
-
-      try {
-        await this.page.evaluate(() => { (window as any).__corecheck_xss = false; }).catch(() => {});
-
-        await inputLocator.focus().catch(() => {});
-        await inputLocator.fill('').catch(() => {}); // Limpiar antes de inyectar
-        await inputLocator.fill(payload.value).catch(() => {});
-        await inputLocator.dispatchEvent('input').catch(() => {});
-        await inputLocator.dispatchEvent('change').catch(() => {});
-        await inputLocator.press('Tab').catch(() => {});
-
-        await this.page.waitForTimeout(400);
-
-        if (payload.type === 'XSS') {
-          const isXssTriggered = await this.page.evaluate(() => (window as any).__corecheck_xss === true).catch(() => false);
-          if (isXssTriggered) {
-            this.findings.push({
-              id: `XSS-TRIGGERED-${Date.now()}`,
-              ruleId: payload.ruleId,
-              title: 'Vulnerabilidad Ejecutable XSS Reflejado en Cliente',
-              severity: payload.severity,
-              description: `El campo \`${selector}\` interpretó y ejecutó etiquetas scripts/eventos inline inyectados.`,
-              evidence: { selector, requestPayload: payload.value },
-              remediation: {
-                explanation: 'Sanitice las entradas antes de inyectarlas en el DOM y aplique Content Security Policy (CSP).',
-                codeBefore: `element.innerHTML = input;`,
-                codeAfter: `element.textContent = input;`
-              },
-              standards: { owasp: payload.owasp, cwe: payload.cwe }
-            });
-          }
-        }
-
-        if (network500Detected) {
-          this.findings.push({
-            id: `SERVER-ERROR-500-${Date.now()}`,
-            ruleId: 'SEC-UNHANDLED-EXCEPTION',
-            title: `Excepción Interna del Servidor (HTTP 500) tras Fuzzing (${payload.type})`,
-            severity: 'HIGH',
-            description: `El envío del vector '${payload.type}' en \`${selector}\` provocó un fallo no controlado en el servidor.`,
-            evidence: { selector, requestPayload: payload.value, responseStatus: 500 },
-            remediation: {
-              explanation: 'Implemente middlewares de validación de esquemas para filtrar entradas anómalas.',
-              codeBefore: `app.post('/login', (req, res) => { ... });`,
-              codeAfter: `app.post('/login', validateDTO(LoginSchema), (req, res) => { ... });`
-            },
-            standards: { owasp: ['A05:2021-Security Misconfiguration'], cwe: ['CWE-248'] }
-          });
-        }
-
-        // Limpiar el campo al finalizar la prueba
-        await inputLocator.fill('').catch(() => {});
-      } catch {
-        // Ignorar excepciones por desmonte de elementos
-      } finally {
-        this.page.off('response', responseListener);
-      }
-    }
   }
 }

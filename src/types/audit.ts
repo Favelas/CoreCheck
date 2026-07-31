@@ -1,6 +1,12 @@
 export type SeverityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 export type OutputFormat = 'json' | 'sarif' | 'html';
 
+export interface FindingLocation {
+  selector?: string;
+  snippet?: string;
+  url?: string;
+}
+
 export interface AuditFinding {
   id: string;
   ruleId: string;
@@ -14,6 +20,8 @@ export interface AuditFinding {
     responseStatus?: number;
     responseHeaders?: Record<string, string>;
     screenshotPath?: string;
+    artifactPath?: string; // <-- Agregado para soportar el Presupuesto de Evidencia (Tarea 10)
+    locations?: FindingLocation[];
   };
   remediation: {
     explanation: string;

@@ -1,12 +1,14 @@
-import { chromium, Browser } from 'playwright';
-import { AuditExecutionOptions, AuditFinding, FindingLocation, OutputFormat } from '../types/audit';
-import { FormActiveInspector } from '../inspectors/form_active_inspector';
-import { FuzzingInspector } from '../inspectors/fuzzing_inspector';
-import { ConsoleDataInspector } from '../inspectors/console_data_inspector';
-import { VisualMetaInspector } from '../inspectors/visual_meta_inspector';
-import { HeadersConfigInspector } from '../inspectors/headers_config_inspector';
-import { exportToSarif } from '../utils/sarif_exporter';
 import { promises as fs } from 'fs';
+import { Browser, BrowserContext, Response, chromium } from 'playwright';
+
+// Importaciones relativas locales (con extensión .js requerida por Node16/ESM)
+import { ConsoleDataInspector } from '../inspectors/console_data_inspector.js';
+import { FormActiveInspector } from '../inspectors/form_active_inspector.js';
+import { FuzzingInspector } from '../inspectors/fuzzing_inspector.js';
+import { HeadersConfigInspector } from '../inspectors/headers_config_inspector.js';
+import { VisualMetaInspector } from '../inspectors/visual_meta_inspector.js';
+import { AuditExecutionOptions, AuditFinding, FindingLocation, OutputFormat } from '../types/audit.js';
+import { exportToSarif } from '../utils/sarif_exporter.js';
 
 export class AuditRunner {
   private options: Required<AuditExecutionOptions>;
@@ -14,7 +16,6 @@ export class AuditRunner {
   constructor(options: AuditExecutionOptions) {
     const defaultFormats: OutputFormat[] = ['json', 'sarif'];
 
-    // Construcción segura garantizando que Required<T> se satisfaga
     this.options = {
       targetUrl: options.targetUrl,
       storageStatePath: options.storageStatePath ?? '',
@@ -28,9 +29,9 @@ export class AuditRunner {
 
   public async run(): Promise<AuditFinding[]> {
     let browser: Browser | null = null;
+    const contextsToClose: BrowserContext[] = [];
     const allFindings: AuditFinding[] = [];
 
-    // Derivar directorio de salida desde el inicio
     const baseDir = this.getOutputDir();
     await fs.mkdir(baseDir, { recursive: true });
 
@@ -46,72 +47,75 @@ export class AuditRunner {
 
       const contextOptions = {
         ...(this.options.storageStatePath ? { storageState: this.options.storageStatePath } : {}),
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
         viewport: { width: 1280, height: 720 },
         deviceScaleFactor: 1,
         isMobile: false,
         hasTouch: false
       };
 
-      const context = await browser.newContext(contextOptions);
-      const page = await context.newPage();
+      // Contexto principal para la auditoría pasiva
+      const mainContext = await browser.newContext(contextOptions);
+      mainContext.setDefaultTimeout(this.options.timeoutMs);
+      contextsToClose.push(mainContext);
 
-      page.setDefaultTimeout(this.options.timeoutMs);
+      const page = await mainContext.newPage();
 
-      // Instanciar inspectores base
       const consoleInspector = new ConsoleDataInspector(page);
       const visualMetaInspector = new VisualMetaInspector(page);
 
-      // 🛡️ 1. Navegación Estricta con Verificación de Renderizado y Resiliencia anti-WAF
+      // 🛡️ 1. Navegación Estricta con Retry Loop Activo
       let navigationSuccess = false;
       let attempt = 0;
+      let mainResponse: Response | null = null;
 
       while (attempt <= this.options.maxRetries && !navigationSuccess) {
         try {
           attempt++;
 
-          // Usar 'commit' para capturar la respuesta inicial sin bloquearse en WebSockets/Assets pesados
-          await page.goto(this.options.targetUrl, {
+          mainResponse = await page.goto(this.options.targetUrl, {
             waitUntil: 'commit',
             timeout: this.options.timeoutMs
           });
 
-          // Esperar a que la estructura base del DOM esté renderizada
-          await page.waitForSelector('body', { timeout: 10000 });
-
-          // Esperar brevemente para hidratación de frameworks como Vue/React/Angular
-          await page.waitForSelector('input, form, button, #app, #root', { timeout: 5000 }).catch(() => {});
+          // Sin .catch silenciado: si expira el tiempo, dispara el catch del retry loop
+          await page.waitForFunction(
+            () => {
+              const hasInteractiveElements =
+                document.querySelectorAll('input, button, form, a, textarea').length > 0;
+              const bodyLength = document.body ? document.body.innerText.trim().length : 0;
+              return hasInteractiveElements || bodyLength > 30;
+            },
+            { timeout: this.options.timeoutMs }
+          );
 
           navigationSuccess = true;
         } catch (error) {
           if (attempt > this.options.maxRetries) {
-            console.error(`[CRITICAL] Error al renderizar ${this.options.targetUrl}: ${(error as Error).message}`);
+            console.error(
+              `[CRITICAL] Error al renderizar ${this.options.targetUrl}: ${(error as Error).message}`
+            );
           } else {
             await new Promise((res) => setTimeout(res, 2000));
           }
         }
       }
 
-      // 🚨 Guardia de Seguridad: Validar si la página realmente renderizó elementos interactivos o contenido
-      const isPageRendered = await page.evaluate(() => {
-        const hasInputs = document.querySelectorAll('input, button, form, textarea, a').length > 0;
-        const bodyText = document.body ? document.body.innerText.trim().length : 0;
-        return hasInputs || bodyText > 30;
-      }).catch(() => false);
-
-      // Si la página falló en cargar o quedó en blanco, REGISTRAR HALLAZGO CRÍTICO y abortar
-      if (!navigationSuccess || !isPageRendered) {
+      // Guardia de seguridad ante fallo de renderizado
+      if (!navigationSuccess) {
         allFindings.push({
           id: `NAV-FAILED-${Date.now()}`,
           ruleId: 'SEC-NAV-RENDER-FAILED',
           title: 'Fallo Crítico en la Carga y Renderizado de la Aplicación Target',
           severity: 'CRITICAL',
-          description: `La aplicación en '${this.options.targetUrl}' no se renderizó de forma adecuada dentro del tiempo límite (${this.options.timeoutMs}ms). El DOM quedó inaccesible o vacío.`,
+          description: `La aplicación en '${this.options.targetUrl}' no se renderizó dentro del tiempo límite (${this.options.timeoutMs}ms).`,
           evidence: {
             snippet: await page.content().catch(() => 'Sin contenido DOM')
           },
           remediation: {
-            explanation: 'Verifique que el servidor de la aplicación responda correctamente y no bloquee automatizaciones headless o conexiones automatizadas.',
+            explanation:
+              'Verifique que el servidor de la aplicación responda correctamente y no bloquee automatizaciones.',
             codeBefore: '// Timeout en tiempo de carga',
             codeAfter: '// Optimizar la entrega de recursos e infraestructura del frontend'
           },
@@ -121,66 +125,104 @@ export class AuditRunner {
           }
         });
 
-        // Capturar evidencia en imagen del fallo de carga y exportar reporte
         await visualMetaInspector.captureScreenshot(baseDir, 'evidence_landing_failed');
         await this.generateReports(allFindings, baseDir);
         return allFindings;
       }
 
-      // 📸 Captura de Evidencia Visual tras confirmar renderizado exitoso
+      // Captura de evidencia tras renderizado exitoso
       await visualMetaInspector.captureScreenshot(baseDir, 'evidence_landing');
 
       // -----------------------------------------------------------------------
-      // 🛡️ NIVEL 1: ASVS V14 — Inspección de Cabeceras HTTP y Configuración
+      // 🛡️ NIVEL 1: Inspección de Cabeceras HTTP
       // -----------------------------------------------------------------------
-      const headersInspector = new HeadersConfigInspector(page);
-      const headerFindings = await headersInspector.inspectHeaders(this.options.targetUrl);
-      allFindings.push(...headerFindings);
+      if (mainResponse) {
+        const headersInspector = new HeadersConfigInspector();
+        const headerFindings = headersInspector.inspectHeadersFromResponse(
+          this.options.targetUrl,
+          mainResponse.status(),
+          mainResponse.headers()
+        );
+        allFindings.push(...headerFindings);
+      } else {
+        console.warn(`[WARN] No se obtuvo respuesta HTTP principal para ${this.options.targetUrl}.`);
+      }
 
       // -----------------------------------------------------------------------
-      // 2. Ejecución aislada de Inspectores Restantes (Storage, Forms, Fuzzing)
+      // 2. Tareas Aisladas por Contexto Independiente
       // -----------------------------------------------------------------------
       const inspectorTasks: Promise<AuditFinding[]>[] = [];
 
-      // 🟠 NIVEL 3: ASVS V3 — Auditoría Estructural de Formularios y CSRF
-      const formInspector = new FormActiveInspector(page);
-      inspectorTasks.push(formInspector.executeActiveFuzzing());
-
-      // 🔴 NIVEL 4: ASVS V5 — Fuzzing Activo de Inyecciones (XSS, SQLi & Resiliencia)
-      if (this.options.activeFuzzing) {
-        const fuzzingInspector = new FuzzingInspector(page);
-        inspectorTasks.push(fuzzingInspector.executeFuzzing());
-      }
-
-      // 🟡 NIVEL 2: ASVS V2/V3 — Inspección de Web Storage (Tokens, JWT, Secrets)
+      // Storage & Meta (Contexto Principal)
       inspectorTasks.push(consoleInspector.inspectStorage());
-
-      // 🔍 Tarea: Inspección de Meta-etiquetas HTML
       inspectorTasks.push(
         visualMetaInspector.inspectMetadata().then((issues) =>
-          issues.map((issue): AuditFinding => ({
-            id: `META-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-            ruleId: issue.type,
-            title: issue.message,
-            severity: issue.severity === 'LOW' ? 'LOW' : 'INFO',
-            description: issue.message,
-            evidence: {
-              screenshotPath: `${baseDir}/screenshots/evidence_landing.png`
-            },
-            remediation: {
-              explanation: 'Remueva la etiqueta <meta name="generator"> o configure el servidor para no exponer la versión exacta de la tecnología utilizada.',
-              codeBefore: '<meta name="generator" content="Framework/v1.0">',
-              codeAfter: '<!-- Remover la etiqueta meta generator -->'
-            },
-            standards: {
-              owasp: ['A05:2021-Security Misconfiguration'],
-              cwe: ['CWE-200']
-            }
-          }))
+          issues.map(
+            (issue): AuditFinding => ({
+              id: `META-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              ruleId: issue.type,
+              title: issue.message,
+              severity: issue.severity === 'LOW' ? 'LOW' : 'INFO',
+              description: issue.message,
+              evidence: {
+                screenshotPath: `${baseDir}/screenshots/evidence_landing.png`
+              },
+              remediation: {
+                explanation:
+                  'Remueva la etiqueta <meta name="generator"> o configure el servidor para no exponer la versión exacta.',
+                codeBefore: '<meta name="generator" content="Framework/v1.0">',
+                codeAfter: '<!-- Remover la etiqueta meta generator -->'
+              },
+              standards: {
+                owasp: ['A05:2021-Security Misconfiguration'],
+                cwe: ['CWE-200']
+              }
+            })
+          )
         )
       );
 
-      // Esperar la resolución de todos los inspectores sin colapsar la suite si uno falla
+      // Contexto Aislado 1: FormInspector
+      const formTask = (async (): Promise<AuditFinding[]> => {
+        const formCtx = await browser.newContext(contextOptions);
+        formCtx.setDefaultTimeout(this.options.timeoutMs);
+        contextsToClose.push(formCtx);
+
+        const formPage = await formCtx.newPage();
+        const resp = await formPage.goto(this.options.targetUrl, { waitUntil: 'domcontentloaded' });
+
+        if (!resp || !resp.ok()) {
+          console.error(`[ERROR] FormInspector no pudo cargar la página target. Status: ${resp?.status()}`);
+          return [];
+        }
+
+        const formInspector = new FormActiveInspector(formPage);
+        return formInspector.executeActiveFuzzing();
+      })();
+      inspectorTasks.push(formTask);
+
+      // Contexto Aislado 2: FuzzingInspector
+      if (this.options.activeFuzzing) {
+        const fuzzTask = (async (): Promise<AuditFinding[]> => {
+          const fuzzCtx = await browser.newContext(contextOptions);
+          fuzzCtx.setDefaultTimeout(this.options.timeoutMs);
+          contextsToClose.push(fuzzCtx);
+
+          const fuzzPage = await fuzzCtx.newPage();
+          const resp = await fuzzPage.goto(this.options.targetUrl, { waitUntil: 'domcontentloaded' });
+
+          if (!resp || !resp.ok()) {
+            console.error(`[ERROR] FuzzingInspector no pudo cargar la página target. Status: ${resp?.status()}`);
+            return [];
+          }
+
+          const fuzzingInspector = new FuzzingInspector(fuzzPage);
+          return fuzzingInspector.executeFuzzing();
+        })();
+        inspectorTasks.push(fuzzTask);
+      }
+
+      // Esperar todos los inspectores
       const results = await Promise.allSettled(inspectorTasks);
 
       results.forEach((result, index) => {
@@ -191,23 +233,21 @@ export class AuditRunner {
         }
       });
 
-      // 🧹 Consolidación y deduplicación de hallazgos por regla
       const deduplicatedFindings = this.deduplicateFindings(allFindings);
-
-      // Exportación de reportes finales
       await this.generateReports(deduplicatedFindings, baseDir);
 
       return deduplicatedFindings;
     } finally {
+      // Cierre limpio de contextos e instancias
+      for (const ctx of contextsToClose) {
+        await ctx.close().catch(() => {});
+      }
       if (browser) {
         await browser.close();
       }
     }
   }
 
-  /**
-   * Agrupa los hallazgos que comparten el mismo ruleId consolidando sus ubicaciones/evidencias.
-   */
   private deduplicateFindings(findings: AuditFinding[]): AuditFinding[] {
     const groupedMap = new Map<string, AuditFinding>();
 
@@ -220,7 +260,6 @@ export class AuditRunner {
       };
 
       if (!groupedMap.has(key)) {
-        // Primera ocurrencia de la regla
         const locations: FindingLocation[] = [];
         if (currentLocation.selector || currentLocation.snippet) {
           locations.push(currentLocation);
@@ -234,12 +273,10 @@ export class AuditRunner {
           }
         });
       } else {
-        // Regla repetida: agregar la ubicación a la lista consolidada
         const existingFinding = groupedMap.get(key)!;
 
         if (!existingFinding.evidence.locations) {
           existingFinding.evidence.locations = [];
-          // Si el primer hallazgo guardó selector/snippet plano, moverlo a locations
           if (existingFinding.evidence.selector || existingFinding.evidence.snippet) {
             existingFinding.evidence.locations.push({
               selector: existingFinding.evidence.selector,
@@ -254,7 +291,6 @@ export class AuditRunner {
       }
     }
 
-    // Actualizar títulos e información situacional para reglas con múltiples ocurrencias
     return Array.from(groupedMap.values()).map((finding) => {
       const locationsCount = finding.evidence.locations?.length || 0;
 
@@ -290,16 +326,18 @@ export class AuditRunner {
     const seconds = pad(now.getSeconds());
 
     const localTimestamp = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
-    const folderName = `${domainSlug}_${localTimestamp}`;
-
-    return `./audit-results/${folderName}`;
+    return `./audit-results/${domainSlug}_${localTimestamp}`;
   }
 
   private async generateReports(findings: AuditFinding[], baseDir: string): Promise<void> {
     if (this.options.outputFormats.includes('json')) {
       await fs.writeFile(
         `${baseDir}/report.json`,
-        JSON.stringify({ target: this.options.targetUrl, timestamp: new Date().toISOString(), findings }, null, 2),
+        JSON.stringify(
+          { target: this.options.targetUrl, timestamp: new Date().toISOString(), findings },
+          null,
+          2
+        ),
         'utf-8'
       );
     }

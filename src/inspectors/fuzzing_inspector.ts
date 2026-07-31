@@ -1,5 +1,5 @@
 import { Page, Response } from 'playwright';
-import { AuditFinding } from '../types/audit';
+import { AuditFinding } from '../types/audit.js';
 
 export class FuzzingInspector {
   private page: Page;
