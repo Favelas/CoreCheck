@@ -1,6 +1,9 @@
 # Dependencias
 node_modules/
 
+# Compilados de TypeScript
+dist/
+
 # Reportes y evidencias locales
 reports/
 audit-results/
@@ -12,5 +15,3 @@ screenshots/
 
 # Cache del sistema
 .DS_Store
-
-Add-Content -Path .gitignore -Value "`ndist/`nnode_modules/`naudit-results/"
