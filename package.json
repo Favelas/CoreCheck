@@ -1,18 +1,24 @@
 {
   "name": "corecheck",
   "version": "1.0.0",
-  "description": "",
-  "main": "audit_corecheck.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "description": "CoreCheck - Automated SecOps & QA Audit Engine",
+  "type": "module",
+  "main": "dist/cli/index.js",
+  "bin": {
+    "corecheck": "dist/cli/index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "playwright": "^1.62.0"
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "audit": "tsx src/cli/index.ts"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2"
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "playwright": "^1.42.0"
   }
 }
