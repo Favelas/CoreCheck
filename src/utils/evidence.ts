@@ -1,6 +1,5 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { AuditFinding } from '../types/audit.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const MAX_SNIPPET_BYTES = 2048; // 2 KB Limit
 

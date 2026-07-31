@@ -1,15 +1,13 @@
 name: CoreCheck DevSecOps Security Audit
 
 on:
-  push:
-    branches: [ main, master ]
+  # Se ejecuta solo en PRs hacia ramas principales o bajo demanda (evita gastar cuotas en cada push local)
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
   schedule:
     - cron: '0 0 * * 1' # Monitoreo semanal (Lunes 00:00 UTC)
 
-# 🔑 SOLUCIÓN AL WARNING DE PERMISOS (Líneas 11 y 13 de la captura)
 permissions:
   contents: read
   security-events: write
@@ -35,23 +33,27 @@ jobs:
       - name: 4. Instalar navegadores de Playwright
         run: npx playwright install --with-deps chromium
 
-      - name: 5. Ejecutar Motor CoreCheck
-        run: npx tsx src/cli.ts
+      - name: 5. Validar tipos de TypeScript
+        run: npm run typecheck
 
-      - name: 6. Subir Artefactos (ZIP con reportes JSON & SARIF para descarga)
+      - name: 6. Compilar código a dist/
+        run: npm run build
+
+      - name: 7. Ejecutar Motor CoreCheck CLI
+        run: node dist/cli/index.js --url "https://opensource-demo.orangehrmlive.com/" --fail-on HIGH --formats json,html,sarif
+
+      - name: 8. Subir Artefactos (ZIP con reportes JSON & SARIF para descarga)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: corecheck-audit-results
           path: audit-results/
 
-      # 🔑 SOLUCIÓN AL RUTA DE ARCHIVO SARIF Y VERSIÓN V4 (Líneas 10 y 12 de la captura)
-      - name: 7. Subir reportes SARIF a la Pestaña de Seguridad de GitHub
+      - name: 9. Subir reportes SARIF a la Pestaña de Seguridad de GitHub
         if: always()
         run: |
           for file in audit-results/*/results.sarif; do
             if [ -f "$file" ]; then
-              # Extraer el nombre de la carpeta (dominio_fecha) para usarlo como categoría única
               category=$(basename $(dirname "$file"))
               echo "Subiendo $file con categoría $category..."
               
