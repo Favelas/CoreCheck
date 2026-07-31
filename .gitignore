@@ -12,3 +12,5 @@ screenshots/
 
 # Cache del sistema
 .DS_Store
+
+Add-Content -Path .gitignore -Value "`ndist/`nnode_modules/`naudit-results/"
