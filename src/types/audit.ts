@@ -1,5 +1,5 @@
 export type SeverityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
-export type OutputFormat = 'json' | 'sarif' | 'html';
+export type OutputFormat = 'json' | 'sarif' | 'html' | 'markdown';
 
 export interface FindingLocation {
   selector?: string;
@@ -43,4 +43,6 @@ export interface AuditExecutionOptions {
   maxRetries?: number;
   outputFormats?: OutputFormat[];
   activeFuzzing?: boolean;
+  /** Directorio de artefactos (evidencia + reportes). Lo define la CLI / CI. */
+  outputDir?: string;
 }

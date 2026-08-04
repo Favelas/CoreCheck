@@ -8,7 +8,6 @@ import { FuzzingInspector } from '../inspectors/fuzzing_inspector.js';
 import { HeadersConfigInspector } from '../inspectors/headers_config_inspector.js';
 import { VisualMetaInspector } from '../inspectors/visual_meta_inspector.js';
 import { AuditExecutionOptions, AuditFinding, FindingLocation, OutputFormat } from '../types/audit.js';
-import { exportToSarif } from '../utils/sarif_exporter.js';
 
 export class AuditRunner {
   private options: Required<AuditExecutionOptions>;
@@ -23,7 +22,9 @@ export class AuditRunner {
       timeoutMs: options.timeoutMs ?? 30000,
       maxRetries: options.maxRetries ?? 2,
       activeFuzzing: options.activeFuzzing ?? true,
-      outputFormats: options.outputFormats ?? defaultFormats
+      // Conservado en el contrato; la generación de reportes la orquesta la CLI (Punto 6 / Opción A).
+      outputFormats: options.outputFormats ?? defaultFormats,
+      outputDir: options.outputDir ?? ''
     };
   }
 
@@ -126,7 +127,6 @@ export class AuditRunner {
         });
 
         await visualMetaInspector.captureScreenshot(baseDir, 'evidence_landing_failed');
-        await this.generateReports(allFindings, baseDir);
         return allFindings;
       }
 
@@ -233,10 +233,7 @@ export class AuditRunner {
         }
       });
 
-      const deduplicatedFindings = this.deduplicateFindings(allFindings);
-      await this.generateReports(deduplicatedFindings, baseDir);
-
-      return deduplicatedFindings;
+      return this.deduplicateFindings(allFindings);
     } finally {
       // Cierre limpio de contextos e instancias
       for (const ctx of contextsToClose) {
@@ -306,7 +303,15 @@ export class AuditRunner {
     });
   }
 
+  /**
+   * Usa el outputDir de la CLI si está definido; si no, genera un path con timestamp
+   * (uso standalone del runner sin orquestación CLI).
+   */
   private getOutputDir(): string {
+    if (this.options.outputDir) {
+      return this.options.outputDir;
+    }
+
     let domainSlug = 'target';
     try {
       const parsedUrl = new URL(this.options.targetUrl);
@@ -327,23 +332,5 @@ export class AuditRunner {
 
     const localTimestamp = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
     return `./audit-results/${domainSlug}_${localTimestamp}`;
-  }
-
-  private async generateReports(findings: AuditFinding[], baseDir: string): Promise<void> {
-    if (this.options.outputFormats.includes('json')) {
-      await fs.writeFile(
-        `${baseDir}/report.json`,
-        JSON.stringify(
-          { target: this.options.targetUrl, timestamp: new Date().toISOString(), findings },
-          null,
-          2
-        ),
-        'utf-8'
-      );
-    }
-
-    if (this.options.outputFormats.includes('sarif')) {
-      await exportToSarif(findings, `${baseDir}/results.sarif`);
-    }
   }
 }

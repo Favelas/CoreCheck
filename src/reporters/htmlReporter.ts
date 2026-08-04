@@ -95,28 +95,3 @@ export function generateHtmlReport(findings: AuditFinding[], outputPath: string)
 
   fs.writeFileSync(outputPath, htmlContent, 'utf-8');
 }
-
-export function generateMarkdownReport(findings: AuditFinding[], outputPath: string): void {
-  let md = `## 🛡️ CoreCheck Security Audit Report\n\n`;
-  md += `- **Hallazgos Totales:** ${findings.length}\n\n`;
-
-  if (findings.length === 0) {
-    md += `✅ **No se detectaron vulnerabilidades.**\n`;
-  } else {
-    md += `| Severidad | Regla | Título | Ubicación |\n`;
-    md += `| :--- | :--- | :--- | :--- |\n`;
-
-    findings.forEach(f => {
-      const icon = (f.severity === 'CRITICAL' || f.severity === 'HIGH') ? '🔴' : f.severity === 'MEDIUM' ? '🟡' : '🔵';
-      const selector = f.evidence?.selector ? `\`${f.evidence.selector}\`` : '`N/A`';
-      md += `| ${icon} ${f.severity} | \`${f.ruleId}\` | ${f.title} | ${selector} |\n`;
-    });
-  }
-
-  const dir = path.dirname(outputPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  fs.writeFileSync(outputPath, md, 'utf-8');
-}
