@@ -3,18 +3,20 @@
   "version": "1.0.0",
   "description": "CoreCheck - Automated SecOps & QA Audit Engine",
   "type": "module",
-  "main": "dist/cli/index.js",
+  "main": "dist/index.js",
   "bin": {
-    "corecheck": "dist/cli/index.js"
+    "corecheck": "dist/index.js"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "start": "node dist/index.js",
     "audit": "tsx src/cli/index.ts",
     "audit:sample": "tsx src/cli/index.ts --url https://example.com --fail-on HIGH --formats json,html,sarif,markdown --output-dir ./audit-results --api-key cc_dev_enterprise_governance",
     "control-plane": "tsx src/server/index.ts",
     "postinstall": "playwright install chromium"
   },
+
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@types/pdfkit": "^0.17.6",
