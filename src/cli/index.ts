@@ -9,7 +9,6 @@ import { generateHtmlReport } from '../reporters/htmlReporter.js';
 import { generateMarkdownReport } from '../reporters/markdownReporter.js';
 import {
   AuditExecutionOptions,
-  AuditFinding,
   OutputFormat,
   SeverityLevel
 } from '../types/audit.js';
@@ -77,6 +76,14 @@ function assertValidUrl(raw: string): string {
   }
 }
 
+function parsePositiveInt(raw: string, flagName: string): number {
+  const value = parseInt(raw, 10);
+  if (Number.isNaN(value) || value < 0) {
+    throw new Error(`${flagName} debe ser un entero >= 0.`);
+  }
+  return value;
+}
+
 /** Crea `./audit-results/{dominio}_{YYYY-MM-DD_HH-mm-ss}` para no pisar corridas previas. */
 function buildDatedOutputDir(baseDir: string, targetUrl: string): string {
   let domainSlug = 'target';
@@ -123,6 +130,8 @@ program
   )
   .option('-c, --concurrency <number>', 'Número de ejecuciones concurrentes', '2')
   .option('-t, --timeout <number>', 'Timeout global en ms por página', '30000')
+  .option('--max-depth <number>', 'Profundidad máxima del crawler BFS', '2')
+  .option('--max-pages <number>', 'Máximo de páginas a descubrir/auditar', '10')
   .option('--fuzzing', 'Habilitar fuzzing activo', false);
 
 program.parse(process.argv);
@@ -133,6 +142,12 @@ void (async () => {
     const targetUrl = assertValidUrl(opts.url);
     const outputFormats = parseFormats(opts.formats);
     const failOnSeverity = parseFailOn(opts.failOn);
+    const maxDepth = parsePositiveInt(opts.maxDepth, '--max-depth');
+    const maxPages = parsePositiveInt(opts.maxPages, '--max-pages');
+    if (maxPages < 1) {
+      throw new Error('--max-pages debe ser >= 1.');
+    }
+
     const baseOutputDir = path.resolve(opts.outputDir);
     const outputDir = opts.flatOutput
       ? baseOutputDir
@@ -143,6 +158,7 @@ void (async () => {
     console.log(`Output dir: ${outputDir}`);
     console.log(`Formats: ${outputFormats.join(', ')}`);
     console.log(`Fail-on: ${failOnSeverity}`);
+    console.log(`Crawler: maxDepth=${maxDepth}, maxPages=${maxPages}`);
 
     fs.mkdirSync(outputDir, { recursive: true });
 
@@ -153,18 +169,29 @@ void (async () => {
       timeoutMs: parseInt(opts.timeout, 10),
       outputFormats,
       outputDir,
-      activeFuzzing: Boolean(opts.fuzzing)
+      activeFuzzing: Boolean(opts.fuzzing),
+      maxDepth,
+      maxPages,
+      sameOriginOnly: true
     };
 
     const runner = new AuditRunner(auditOptions);
-    const findings: AuditFinding[] = await runner.run();
+    const { findings, scannedPages } = await runner.run();
+
+    console.log(`\nScanned pages (${scannedPages.length}):`);
+    scannedPages.forEach((url) => console.log(`  - ${url}`));
 
     if (outputFormats.includes('json')) {
       const jsonPath = path.join(outputDir, 'findings.json');
       fs.writeFileSync(
         jsonPath,
         JSON.stringify(
-          { target: targetUrl, timestamp: new Date().toISOString(), findings },
+          {
+            target: targetUrl,
+            timestamp: new Date().toISOString(),
+            scannedPages,
+            findings
+          },
           null,
           2
         ),
