@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Entrypoint raíz: `node dist/index.js` → CLI real en `./cli/index.js`.
- * Evita MODULE_NOT_FOUND cuando se invoca la ruta corta post-build.
+ * Public package entrypoint (`main` / `bin` → dist/index.js).
+ * Delegates to the canonical CLI surface in `./cli/index.js`.
  */
 import './cli/index.js';

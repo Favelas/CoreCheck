@@ -23,14 +23,16 @@ import {
   AuditExecutionOptions,
   AuditReportBundle,
   CvssVersion,
-  OutputFormat,
   SeverityLevel,
   TicketProvider
 } from '../types/audit.js';
 import { LicenseModule } from '../types/license.js';
 import { exportToSarif } from '../utils/sarif_exporter.js';
-
-const program = new Command();
+import {
+  DEFAULT_FORMATS_CSV,
+  resolveArtifactLayout,
+  resolveOutputFormats
+} from './cli_contract.js';
 
 const VALID_SEVERITIES = new Set<SeverityLevel>([
   'CRITICAL',
@@ -40,39 +42,9 @@ const VALID_SEVERITIES = new Set<SeverityLevel>([
   'INFO'
 ]);
 
-const VALID_FORMATS = new Set<OutputFormat>([
-  'json',
-  'sarif',
-  'html',
-  'markdown',
-  'pdf'
-]);
-
 const VALID_ENVS = new Set<AuditEnvironment>(['prod', 'staging', 'dev']);
 const VALID_TICKETS = new Set<TicketProvider>(['jira', 'azure_boards', 'gitlab']);
 const VALID_CVSS = new Set<CvssVersion>(['3.1', '4.0']);
-
-function parseFormats(raw: string): OutputFormat[] {
-  const formats = raw
-    .split(',')
-    .map((f) => f.trim().toLowerCase())
-    .filter(Boolean) as OutputFormat[];
-
-  if (formats.length === 0) {
-    throw new Error(
-      'Debe indicar al menos un formato en --formats (json,sarif,html,markdown,pdf).'
-    );
-  }
-
-  const invalid = formats.filter((f) => !VALID_FORMATS.has(f));
-  if (invalid.length > 0) {
-    throw new Error(
-      `Formato(s) inválido(s): ${invalid.join(', ')}. Válidos: ${[...VALID_FORMATS].join(', ')}.`
-    );
-  }
-
-  return [...new Set(formats)];
-}
 
 function parseFailOn(raw: string): SeverityLevel {
   const severity = raw.trim().toUpperCase() as SeverityLevel;
@@ -183,105 +155,125 @@ function buildDatedOutputDir(baseDir: string, targetUrl: string): string {
   return path.join(baseDir, `${domainSlug}_${stamp}`);
 }
 
-program
-  .name('corecheck-audit')
-  .description('CoreCheck DevSecOps Engine - Motor de auditoría de seguridad y accesibilidad')
-  .requiredOption('-u, --url <string>', 'URL objetivo a auditar')
-  .option('-a, --auth-state <path>', 'Ruta al archivo storageState.json de Playwright')
-  .option(
-    '-f, --formats <items>',
-    'Formatos de reporte separados por coma (json,html,sarif,markdown,pdf)',
-    'json,html,sarif'
-  )
-  .option(
-    '-o, --output-dir <path>',
-    'Directorio base de reportes (se crea subcarpeta dominio_timestamp)',
-    './audit-results'
-  )
-  .option(
-    '--flat-output',
-    'Escribir reportes directo en --output-dir sin subcarpeta fechada (útil en CI)',
-    false
-  )
-  .option(
-    '--fail-on <severity>',
-    'Severidad mínima para exit code 1 (override de política por entorno)',
-    'HIGH'
-  )
-  .option('-c, --concurrency <number>', 'Número de ejecuciones concurrentes', '2')
-  .option('-t, --timeout <number>', 'Timeout global en ms por página', '30000')
-  .option('--max-depth <number>', 'Profundidad máxima del crawler BFS', '2')
-  .option('--max-pages <number>', 'Máximo de páginas a descubrir/auditar', '10')
-  .option('--fuzzing', 'Habilitar fuzzing activo', false)
-  .option('--auth-login-url <url>', 'URL del formulario de login (auth avanzada)')
-  .option('--auth-user <username>', 'Usuario para form-login')
-  .option('--auth-pass <password>', 'Password para form-login')
-  .option(
-    '--auth-header <header>',
-    'Header HTTP custom "Name: Value" (repetible; p.ej. Authorization: Bearer …)',
-    (value: string, previous: string[]) => [...previous, value],
-    [] as string[]
-  )
-  .option(
-    '--cvss-version <version>',
-    'Versión CVSS para calibración: 3.1 | 4.0',
-    '3.1'
-  )
-  .option('--pdf', 'Generar PDF ejecutivo (equivalente a incluir pdf en --formats)', false)
-  .option('--output-pdf <path>', 'Nombre o ruta del PDF (siempre se guarda dentro de --output-dir)')
-  .option('--webhook-url <url>', 'Webhook Slack/Teams/genérico para alertas CI/CD')
-  .option(
-    '--environment <env>',
-    'Entorno de política: prod | staging | dev',
-    'prod'
-  )
-  .option(
-    '--baseline <path>',
-    'Ruta a .corecheckignore o baseline JSON de hallazgos aceptados'
-  )
-  .option(
-    '--tickets <provider>',
-    'Exportar / enviar tickets: jira | azure_boards | gitlab'
-  )
-  .option('--ticket-project <key>', 'Project key / area / GitLab project id para tickets')
-  .option(
-    '--ticket-submit',
-    'Enviar tickets por HTTP (requiere credenciales). Default: dry-run (solo exporta JSON)',
-    false
-  )
-  .option('--jira-domain <url>', 'Jira Cloud domain (ej. https://acme.atlassian.net)')
-  .option('--jira-email <email>', 'Jira user email (Basic auth)')
-  .option('--jira-token <token>', 'Jira API token (env JIRA_API_TOKEN)')
-  .option(
-    '--webhook-secret <secret>',
-    'HMAC secret para firmar webhooks (env CORECHECK_WEBHOOK_SECRET)'
-  )
-  .option(
-    '--api-key <key>',
-    'API Key comercial CoreCheck (alternativa: env CORECHECK_API_KEY)'
-  )
-  .option(
-    '--skip-license',
-    'Omitir validación de licencia (solo desarrollo local; no usar en CI prod)',
-    false
-  );
+function registerRunOptions(command: Command): Command {
+  return command
+    .requiredOption('-u, --url <string>', 'URL objetivo a auditar')
+    .option('-a, --auth-state <path>', 'Ruta al archivo storageState.json de Playwright')
+    .option(
+      '-f, --formats <items>',
+      'Formatos canónicos CSV: json,html,sarif,markdown,pdf',
+      DEFAULT_FORMATS_CSV
+    )
+    .option(
+      '-o, --output-dir <path>',
+      'Directorio base de reportes (subcarpeta dominio_timestamp salvo --flat-output)',
+      './audit-results'
+    )
+    .option(
+      '--out <path>',
+      'Salida CI: directorio de artefactos, o ruta de archivo (implica flat + basename preferido)'
+    )
+    .option(
+      '--flat-output',
+      'Escribir reportes directo en el directorio de salida sin subcarpeta fechada',
+      false
+    )
+    .option('--html', 'Emitir report.html (contrato de formato; ver cli_contract)', false)
+    .option('--json', 'Emitir findings.json', false)
+    .option('--sarif', 'Emitir results.sarif', false)
+    .option('--markdown', 'Emitir report.md', false)
+    .option('--pdf', 'Emitir PDF ejecutivo', false)
+    .option(
+      '--fail-on <severity>',
+      'Severidad mínima para exit code 1 (override de política por entorno)',
+      'HIGH'
+    )
+    .option('-c, --concurrency <number>', 'Número de ejecuciones concurrentes', '2')
+    .option('-t, --timeout <number>', 'Timeout global en ms por página', '30000')
+    .option('--max-depth <number>', 'Profundidad máxima del crawler BFS', '2')
+    .option('--max-pages <number>', 'Máximo de páginas a descubrir/auditar', '10')
+    .option('--fuzzing', 'Habilitar fuzzing activo', false)
+    .option('--auth-login-url <url>', 'URL del formulario de login (auth avanzada)')
+    .option('--auth-user <username>', 'Usuario para form-login')
+    .option('--auth-pass <password>', 'Password para form-login')
+    .option(
+      '--auth-header <header>',
+      'Header HTTP custom "Name: Value" (repetible; p.ej. Authorization: Bearer …)',
+      (value: string, previous: string[]) => [...previous, value],
+      [] as string[]
+    )
+    .option('--cvss-version <version>', 'Versión CVSS para calibración: 3.1 | 4.0', '3.1')
+    .option(
+      '--output-pdf <path>',
+      'Nombre o ruta del PDF (siempre se materializa dentro del directorio de salida)'
+    )
+    .option('--webhook-url <url>', 'Webhook Slack/Teams/genérico para alertas CI/CD')
+    .option('--environment <env>', 'Entorno de política: prod | staging | dev', 'prod')
+    .option(
+      '--baseline <path>',
+      'Ruta a .corecheckignore o baseline JSON de hallazgos aceptados'
+    )
+    .option('--tickets <provider>', 'Exportar / enviar tickets: jira | azure_boards | gitlab')
+    .option('--ticket-project <key>', 'Project key / area / GitLab project id para tickets')
+    .option(
+      '--ticket-submit',
+      'Enviar tickets por HTTP (requiere credenciales). Default: dry-run (solo exporta JSON)',
+      false
+    )
+    .option('--jira-domain <url>', 'Jira Cloud domain (ej. https://acme.atlassian.net)')
+    .option('--jira-email <email>', 'Jira user email (Basic auth)')
+    .option('--jira-token <token>', 'Jira API token (env JIRA_API_TOKEN)')
+    .option(
+      '--webhook-secret <secret>',
+      'HMAC secret para firmar webhooks (env CORECHECK_WEBHOOK_SECRET)'
+    )
+    .option(
+      '--api-key <key>',
+      'API Key comercial CoreCheck (alternativa: env CORECHECK_API_KEY)'
+    )
+    .option(
+      '--skip-license',
+      'Omitir validación de licencia (solo desarrollo local; no usar en CI prod)',
+      false
+    );
+}
 
-program.parse(process.argv);
+const program = new Command()
+  .name('corecheck')
+  .description(
+    'CoreCheck v1.0 — Unified Digital Quality & Security Gate (DAST, A11y, Perf, Privacy, SEO/GEO, AI readiness)'
+  )
+  .version('1.0.0');
 
-void (async () => {
+const runCommand = registerRunOptions(
+  program
+    .command('run', { isDefault: true })
+    .description(
+      'Ejecuta una auditoría Quality Gate contra una URL (entrypoint canónico CI/CD)'
+    )
+);
+
+runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
   const startedAt = Date.now();
   try {
-    const opts = program.opts();
-    const targetUrl = assertValidUrl(opts.url);
-    let outputFormats = parseFormats(opts.formats);
-    if (opts.pdf && !outputFormats.includes('pdf')) {
-      outputFormats = [...outputFormats, 'pdf'];
-    }
+    const targetUrl = assertValidUrl(String(opts.url));
+    const outputFormats = resolveOutputFormats({
+      formatsCsv: String(opts.formats ?? DEFAULT_FORMATS_CSV),
+      formatsSource: command.getOptionValueSource('formats'),
+      toggles: {
+        html: Boolean(opts.html),
+        json: Boolean(opts.json),
+        sarif: Boolean(opts.sarif),
+        markdown: Boolean(opts.markdown),
+        pdf: Boolean(opts.pdf)
+      },
+      outputPdf: opts.outputPdf ? String(opts.outputPdf) : undefined
+    });
 
-    const cliFailOn = parseFailOn(opts.failOn);
+    const cliFailOn = parseFailOn(String(opts.failOn));
     const environment = parseEnvironment(opts.environment as string);
-    const maxDepth = parsePositiveInt(opts.maxDepth, '--max-depth');
-    let maxPages = parsePositiveInt(opts.maxPages, '--max-pages');
+    const maxDepth = parsePositiveInt(String(opts.maxDepth), '--max-depth');
+    let maxPages = parsePositiveInt(String(opts.maxPages), '--max-pages');
     if (maxPages < 1) {
       throw new Error('--max-pages debe ser >= 1.');
     }
@@ -299,7 +291,8 @@ void (async () => {
       );
     }
 
-    const wantsPdf = outputFormats.includes('pdf') || Boolean(opts.pdf) || Boolean(opts.outputPdf);
+    const wantsPdf =
+      outputFormats.includes('pdf') || Boolean(opts.pdf) || Boolean(opts.outputPdf);
     const requestedModules: LicenseModule[] = ['compliance_mapping'];
     if (wantsPdf) requestedModules.push('pdf_report');
     if (ticketProvider) requestedModules.push('ticketing');
@@ -381,10 +374,19 @@ void (async () => {
       console.warn('[License] --skip-license activo: validación comercial omitida.');
     }
 
-    const baseOutputDir = path.resolve(opts.outputDir);
-    const outputDir = opts.flatOutput
-      ? baseOutputDir
-      : buildDatedOutputDir(baseOutputDir, targetUrl);
+    const artifactLayout = resolveArtifactLayout({
+      outputDir: String(opts.outputDir),
+      outputDirSource: command.getOptionValueSource('outputDir'),
+      out: opts.out !== undefined ? String(opts.out) : undefined,
+      outSource: command.getOptionValueSource('out'),
+      flatOutput: Boolean(opts.flatOutput),
+      flatOutputSource: command.getOptionValueSource('flatOutput'),
+      outputPdf: opts.outputPdf ? String(opts.outputPdf) : undefined
+    });
+
+    const outputDir = artifactLayout.flatOutput
+      ? artifactLayout.baseOutputDir
+      : buildDatedOutputDir(artifactLayout.baseOutputDir, targetUrl);
 
     console.log(`[CoreCheck DevSecOps Engine] Iniciando auditoría activa...`);
     console.log(`Target URL: ${targetUrl}`);
@@ -399,7 +401,7 @@ void (async () => {
     fs.mkdirSync(outputDir, { recursive: true });
 
     const authLoginUrl = opts.authLoginUrl
-      ? assertValidUrl(opts.authLoginUrl)
+      ? assertValidUrl(opts.authLoginUrl as string)
       : undefined;
     if ((opts.authUser || opts.authPass) && !authLoginUrl) {
       throw new Error(
@@ -410,16 +412,16 @@ void (async () => {
     const customHeaders = parseAuthHeaders(opts.authHeader as string[] | undefined);
     const hasCustomHeaders = Object.keys(customHeaders).length > 0;
     const cvssVersion = parseCvssVersion(String(opts.cvssVersion ?? '3.1'));
-    const concurrency = parsePositiveInt(opts.concurrency, '--concurrency');
+    const concurrency = parsePositiveInt(String(opts.concurrency), '--concurrency');
     if (concurrency < 1) {
       throw new Error('--concurrency debe ser >= 1.');
     }
 
     const auditOptions: AuditExecutionOptions = {
       targetUrl,
-      storageStatePath: opts.authState,
+      storageStatePath: opts.authState as string | undefined,
       concurrency,
-      timeoutMs: parseInt(opts.timeout, 10),
+      timeoutMs: parseInt(String(opts.timeout), 10),
       outputFormats,
       outputDir,
       activeFuzzing: Boolean(opts.fuzzing),
@@ -566,7 +568,7 @@ void (async () => {
     }
 
     if (outputFormats.includes('html')) {
-      const htmlPath = path.join(outputDir, 'report.html');
+      const htmlPath = path.join(outputDir, artifactLayout.htmlFileName);
       generateHtmlReport(bundle, htmlPath);
       console.log(`Reporte HTML: ${htmlPath}`);
     }
@@ -578,11 +580,7 @@ void (async () => {
     }
 
     if (wantsPdf) {
-      // Siempre dentro de outputDir (carpeta dominio_timestamp bajo audit-results).
-      const pdfFileName = opts.outputPdf
-        ? path.basename(String(opts.outputPdf))
-        : 'executive-report.pdf';
-      const pdfPath = path.join(outputDir, pdfFileName);
+      const pdfPath = path.join(outputDir, artifactLayout.pdfFileName);
       await generatePdfReport(bundle, pdfPath);
       console.log(`Reporte PDF: ${pdfPath}`);
       console.log(`Dashboard (local): ${interactiveDashboardPath}`);
@@ -692,4 +690,6 @@ void (async () => {
     console.error(`[Critical Error]`, (error as Error).message);
     process.exit(1);
   }
-})();
+});
+
+void program.parseAsync(process.argv);
