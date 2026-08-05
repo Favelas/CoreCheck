@@ -77,6 +77,25 @@ function assertValidUrl(raw: string): string {
   }
 }
 
+/** Crea `./audit-results/{dominio}_{YYYY-MM-DD_HH-mm-ss}` para no pisar corridas previas. */
+function buildDatedOutputDir(baseDir: string, targetUrl: string): string {
+  let domainSlug = 'target';
+  try {
+    domainSlug = new URL(targetUrl).hostname.replace(/^www\./, '');
+  } catch {
+    domainSlug = targetUrl.replace(/[^a-zA-Z0-9]/g, '_');
+  }
+
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const stamp = [
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+    `${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`
+  ].join('_');
+
+  return path.join(baseDir, `${domainSlug}_${stamp}`);
+}
+
 program
   .name('corecheck-audit')
   .description('CoreCheck DevSecOps Engine - Motor de auditoría de seguridad y accesibilidad')
@@ -87,7 +106,16 @@ program
     'Formatos de reporte separados por coma (json,html,sarif,markdown)',
     'json,html,sarif'
   )
-  .option('-o, --output-dir <path>', 'Directorio de salida de reportes', './audit-results')
+  .option(
+    '-o, --output-dir <path>',
+    'Directorio base de reportes (se crea subcarpeta dominio_timestamp)',
+    './audit-results'
+  )
+  .option(
+    '--flat-output',
+    'Escribir reportes directo en --output-dir sin subcarpeta fechada (útil en CI)',
+    false
+  )
   .option(
     '--fail-on <severity>',
     'Severidad mínima para retornar exit code 1 (CRITICAL, HIGH, MEDIUM, LOW, INFO)',
@@ -105,7 +133,10 @@ void (async () => {
     const targetUrl = assertValidUrl(opts.url);
     const outputFormats = parseFormats(opts.formats);
     const failOnSeverity = parseFailOn(opts.failOn);
-    const outputDir = path.resolve(opts.outputDir);
+    const baseOutputDir = path.resolve(opts.outputDir);
+    const outputDir = opts.flatOutput
+      ? baseOutputDir
+      : buildDatedOutputDir(baseOutputDir, targetUrl);
 
     console.log(`[CoreCheck DevSecOps Engine] Iniciando auditoría activa...`);
     console.log(`Target URL: ${targetUrl}`);
@@ -168,7 +199,7 @@ void (async () => {
     console.log(`\nAuditoría finalizada. Total de hallazgos: ${findings.length}`);
 
     if (hasFailingFindings) {
-      console.error(`[GATE FAIL] Hallazgos con severidad >= ${failOnSeverity}`);
+      console.log(`[GATE FAIL] Hallazgos con severidad >= ${failOnSeverity}`);
       process.exit(1);
     }
 

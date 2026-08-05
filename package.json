@@ -10,7 +10,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "audit": "tsx src/cli/index.ts"
+    "audit": "tsx src/cli/index.ts",
+    "audit:sample": "tsx src/cli/index.ts --url https://example.com --fail-on HIGH --formats json,html,sarif,markdown --output-dir ./audit-results",
+    "postinstall": "playwright install chromium"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

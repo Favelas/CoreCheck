@@ -7,6 +7,7 @@ dist/
 # Reportes y evidencias locales
 reports/
 audit-results/
+test-results/
 screenshots/
 
 # Archivos de entorno y logs
