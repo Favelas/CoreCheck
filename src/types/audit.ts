@@ -28,11 +28,13 @@ export type RuleType =
   | 'NETWORK_MIXED_CONTENT'
   | 'NETWORK_COOKIE_FLAGS'
   | 'SECURITY_FINDING'
+  | 'SECURITY_HEADER'
   | 'PERF_WEB_VITAL'
   | 'PERF_ASSET_OPTIMIZATION'
   | 'SEO_META_TAG'
   | 'SEO_STRUCTURE'
   | 'SEO_GEO'
+  | 'SEO_LLM_READINESS'
   | 'PRIVACY_COOKIE'
   | 'PRIVACY_CONSENT'
   | 'PRIVACY_POLICY_LINK';
@@ -231,6 +233,37 @@ export interface AuditReportBundle {
   failOn: SeverityLevel;
   environment?: AuditEnvironment;
   suppressedCount?: number;
+  /** Metadatos de attestation / verificación del informe oficial. */
+  attestation?: AuditAttestation;
+}
+
+/** Attestation del informe PDF / Dashboard Web interactivo. */
+export interface AuditAttestation {
+  /**
+   * Hash de verificación primario (SHA-256 del payload canónico).
+   * Alias histórico: `auditHash` (mismo valor).
+   */
+  attestationHash: string;
+  /** @deprecated Prefer `attestationHash`. Mantenido por compatibilidad. */
+  auditHash: string;
+  /** Algoritmo usado: SHA-256 o HMAC-SHA256 si hay secret. */
+  algorithm: 'SHA-256' | 'HMAC-SHA256';
+  /** Firma HMAC-SHA256 (hex) cuando CORECHECK_ATTESTATION_SECRET está definido. */
+  hmacSignature?: string;
+  /** Versión del CLI embebida en el payload. */
+  cliVersion: string;
+  /** Timestamp UTC firmado (= timestamp del bundle, determinista). */
+  signedAtUtc: string;
+  /** Tier comercial (ej. ENTERPRISE_GOVERNANCE). */
+  licenseTier?: string;
+  organization?: string;
+  accountId?: string;
+  /** URL del Dashboard Web interactivo de esta auditoría. */
+  dashboardUrl: string;
+  /** URL corta de verificación / attestation. */
+  verificationUrl: string;
+  /** Payload estructurado embebido en el QR del PDF. */
+  qrPayload?: string;
 }
 
 export interface WebhookNotifyOptions {
@@ -238,4 +271,8 @@ export interface WebhookNotifyOptions {
   bundle: AuditReportBundle;
   /** Canal destino inferido o forzado. */
   channel?: 'slack' | 'teams' | 'generic';
+  /** Secret HMAC (env CORECHECK_WEBHOOK_SECRET). Firma X-CoreCheck-Signature. */
+  signingSecret?: string;
+  /** Si true, no envía HTTP (solo construye/firma en memoria). */
+  dryRun?: boolean;
 }

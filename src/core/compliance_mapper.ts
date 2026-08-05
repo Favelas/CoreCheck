@@ -305,7 +305,7 @@ export class ComplianceMapper {
     if (category === 'PERFORMANCE' || finding.ruleId.startsWith('PERF-')) {
       return 'PERFORMANCE';
     }
-    if (category === 'SEO' || finding.ruleId.startsWith('SEO-')) {
+    if (category === 'SEO' || finding.ruleId.startsWith('SEO-') || finding.ruleId.startsWith('LLM-')) {
       return 'SEO';
     }
     if (category === 'PRIVACY' || finding.ruleId.startsWith('PRIV-')) {

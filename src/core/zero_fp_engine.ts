@@ -20,6 +20,9 @@ const DETERMINISTIC_DQ_RULES = new Set<string>([
   // Performance — métricas/observables directos
   'PERF-LCP-SLOW',
   'PERF-CLS-HIGH',
+  'PERF-INP-SLOW',
+  'PERF-INP-INLINE-HANDLERS',
+  'PERF-INP-THIRD-PARTY-RISK',
   'PERF-DCL-SLOW',
   'PERF-LOAD-SLOW',
   'PERF-IMAGE-OVERSIZED',
@@ -38,6 +41,10 @@ const DETERMINISTIC_DQ_RULES = new Set<string>([
   'SEO-ROBOTS-TXT-MISSING',
   'SEO-ROBOTS-TXT-INVALID',
   'SEO-JSONLD-MISSING',
+  'LLM-TXT-MISSING',
+  'LLM-TXT-EMPTY',
+  'LLM-TXT-UNSTRUCTURED',
+  'LLM-WELLKNOWN-MISSING',
   'SEO-OPEN-GRAPH-INCOMPLETE',
   'SEO-GEO-LANG-MISSING',
   'SEO-GEO-MAIN-LANDMARK-MISSING',
@@ -218,9 +225,7 @@ export class ZeroFPEngine {
 
     await this.navigate(pageUrl);
     await this.page
-      .evaluate(() => {
-        (window as unknown as { __corecheck_xss?: boolean }).__corecheck_xss = false;
-      })
+      .evaluate(`(() => { window.__corecheck_xss = false; })()`)
       .catch(() => {});
 
     const input = this.page.locator(selector).first();
@@ -235,9 +240,8 @@ export class ZeroFPEngine {
     await this.page.waitForTimeout(400);
 
     return this.page
-      .evaluate(
-        () => (window as unknown as { __corecheck_xss?: boolean }).__corecheck_xss === true
-      )
+      .evaluate(`(() => window.__corecheck_xss === true)()`)
+      .then((v) => Boolean(v))
       .catch(() => false);
   }
 

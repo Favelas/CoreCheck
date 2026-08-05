@@ -7,19 +7,22 @@ import * as path from 'path';
 import { AuditRunner } from '../core/audit_runner.js';
 import { ComplianceMapper } from '../core/compliance_mapper.js';
 import { CvssScorer } from '../core/cvss_scorer.js';
+import { FindingConsolidator } from '../core/finding_consolidator.js';
 import { PolicyEngine } from '../core/policy_engine.js';
 import {
   buildTicketPayloads,
-  notifyWebhook
+  notifyWebhook,
+  TicketClient
 } from '../integrations/index.js';
 import { LicenseValidator, UsageTelemetry } from '../licensing/index.js';
 import { generateHtmlReport } from '../reporters/htmlReporter.js';
 import { generateMarkdownReport } from '../reporters/markdownReporter.js';
-import { generatePdfReport } from '../reporters/pdf_reporter.js';
+import { buildAttestation, generatePdfReport } from '../reporters/pdf_reporter.js';
 import {
   AuditEnvironment,
   AuditExecutionOptions,
   AuditReportBundle,
+  CvssVersion,
   OutputFormat,
   SeverityLevel,
   TicketProvider
@@ -47,6 +50,7 @@ const VALID_FORMATS = new Set<OutputFormat>([
 
 const VALID_ENVS = new Set<AuditEnvironment>(['prod', 'staging', 'dev']);
 const VALID_TICKETS = new Set<TicketProvider>(['jira', 'azure_boards', 'gitlab']);
+const VALID_CVSS = new Set<CvssVersion>(['3.1', '4.0']);
 
 function parseFormats(raw: string): OutputFormat[] {
   const formats = raw
@@ -88,6 +92,43 @@ function parseEnvironment(raw: string): AuditEnvironment {
     );
   }
   return env;
+}
+
+function parseCvssVersion(raw: string): CvssVersion {
+  const version = raw.trim() as CvssVersion;
+  if (!VALID_CVSS.has(version)) {
+    throw new Error(
+      `Versión CVSS inválida en --cvss-version: "${raw}". Válidas: 3.1, 4.0.`
+    );
+  }
+  return version;
+}
+
+/** Parsea `--auth-header "Name: Value"` repetibles a Record. */
+function parseAuthHeaders(rawHeaders: string[] | undefined): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (!rawHeaders || rawHeaders.length === 0) {
+    return headers;
+  }
+
+  for (const raw of rawHeaders) {
+    const sep = raw.indexOf(':');
+    if (sep <= 0) {
+      throw new Error(
+        `Header inválido en --auth-header: "${raw}". Use el formato "Name: Value".`
+      );
+    }
+    const name = raw.slice(0, sep).trim();
+    const value = raw.slice(sep + 1).trim();
+    if (!name || !value) {
+      throw new Error(
+        `Header inválido en --auth-header: "${raw}". Name y Value son requeridos.`
+      );
+    }
+    headers[name] = value;
+  }
+
+  return headers;
 }
 
 function assertValidUrl(raw: string): string {
@@ -175,8 +216,19 @@ program
   .option('--auth-login-url <url>', 'URL del formulario de login (auth avanzada)')
   .option('--auth-user <username>', 'Usuario para form-login')
   .option('--auth-pass <password>', 'Password para form-login')
+  .option(
+    '--auth-header <header>',
+    'Header HTTP custom "Name: Value" (repetible; p.ej. Authorization: Bearer …)',
+    (value: string, previous: string[]) => [...previous, value],
+    [] as string[]
+  )
+  .option(
+    '--cvss-version <version>',
+    'Versión CVSS para calibración: 3.1 | 4.0',
+    '3.1'
+  )
   .option('--pdf', 'Generar PDF ejecutivo (equivalente a incluir pdf en --formats)', false)
-  .option('--output-pdf <path>', 'Ruta de salida del PDF ejecutivo')
+  .option('--output-pdf <path>', 'Nombre o ruta del PDF (siempre se guarda dentro de --output-dir)')
   .option('--webhook-url <url>', 'Webhook Slack/Teams/genérico para alertas CI/CD')
   .option(
     '--environment <env>',
@@ -189,9 +241,21 @@ program
   )
   .option(
     '--tickets <provider>',
-    'Exportar payloads de ticketing: jira | azure_boards | gitlab'
+    'Exportar / enviar tickets: jira | azure_boards | gitlab'
   )
   .option('--ticket-project <key>', 'Project key / area / GitLab project id para tickets')
+  .option(
+    '--ticket-submit',
+    'Enviar tickets por HTTP (requiere credenciales). Default: dry-run (solo exporta JSON)',
+    false
+  )
+  .option('--jira-domain <url>', 'Jira Cloud domain (ej. https://acme.atlassian.net)')
+  .option('--jira-email <email>', 'Jira user email (Basic auth)')
+  .option('--jira-token <token>', 'Jira API token (env JIRA_API_TOKEN)')
+  .option(
+    '--webhook-secret <secret>',
+    'HMAC secret para firmar webhooks (env CORECHECK_WEBHOOK_SECRET)'
+  )
   .option(
     '--api-key <key>',
     'API Key comercial CoreCheck (alternativa: env CORECHECK_API_KEY)'
@@ -343,10 +407,18 @@ void (async () => {
       );
     }
 
+    const customHeaders = parseAuthHeaders(opts.authHeader as string[] | undefined);
+    const hasCustomHeaders = Object.keys(customHeaders).length > 0;
+    const cvssVersion = parseCvssVersion(String(opts.cvssVersion ?? '3.1'));
+    const concurrency = parsePositiveInt(opts.concurrency, '--concurrency');
+    if (concurrency < 1) {
+      throw new Error('--concurrency debe ser >= 1.');
+    }
+
     const auditOptions: AuditExecutionOptions = {
       targetUrl,
       storageStatePath: opts.authState,
-      concurrency: parseInt(opts.concurrency, 10),
+      concurrency,
       timeoutMs: parseInt(opts.timeout, 10),
       outputFormats,
       outputDir,
@@ -357,12 +429,17 @@ void (async () => {
       environment,
       baselinePath: opts.baseline as string | undefined,
       apiKey,
-      ...(authLoginUrl
+      ...(authLoginUrl || hasCustomHeaders
         ? {
             authConfig: {
-              loginUrl: authLoginUrl,
-              username: opts.authUser as string | undefined,
-              password: opts.authPass as string | undefined
+              ...(authLoginUrl
+                ? {
+                    loginUrl: authLoginUrl,
+                    username: opts.authUser as string | undefined,
+                    password: opts.authPass as string | undefined
+                  }
+                : {}),
+              ...(hasCustomHeaders ? { customHeaders } : {})
             }
           }
         : {})
@@ -374,9 +451,19 @@ void (async () => {
     console.log(`\nScanned pages (${scannedPages.length}):`);
     scannedPages.forEach((url) => console.log(`  - ${url}`));
 
+    // 0) Site-level consolidation (headers / privacy policy / robots.txt)
+    const consolidator = new FindingConsolidator();
+    const { findings: consolidatedFindings, stats: consolidationStats } =
+      consolidator.consolidate(findings);
+    console.log(
+      `[Consolidate] ${consolidationStats.beforeCount} → ${consolidationStats.afterCount} hallazgos` +
+        ` (site-level fusionados: ${consolidationStats.siteLevelMerged}, reglas sitio: ${consolidationStats.uniqueSiteRules})`
+    );
+
     // 1) CVSS calibration
-    const cvssScorer = new CvssScorer('3.1');
-    const cvssFindings = cvssScorer.enrichFindings(findings);
+    console.log(`CVSS version: ${cvssVersion}`);
+    const cvssScorer = new CvssScorer(cvssVersion);
+    const cvssFindings = cvssScorer.enrichFindings(consolidatedFindings);
     const { maxCvssScore, penalty: cvssPenalty } =
       cvssScorer.globalScorePenalty(cvssFindings);
 
@@ -407,9 +494,32 @@ void (async () => {
       cvssPenalty
     });
 
+    // Dashboard HTML local + attestation criptográfica (SHA-256 / HMAC opcional).
+    const interactiveDashboardPath = path.join(outputDir, 'interactive-dashboard.html');
+    bundle.attestation = buildAttestation(bundle, {
+      licenseTier: licenseInfo?.tier,
+      organization: licenseInfo?.organization,
+      accountId: licenseInfo?.accountId,
+      localDashboardPath: interactiveDashboardPath,
+      activeFuzzing: Boolean(opts.fuzzing)
+    });
+
     console.log(
       `Digital Quality Score: ${bundle.digitalQualityScore}/100 · Compliance-mapped: ${bundle.compliance.mappedFindingCount}`
     );
+    console.log(
+      `Attestation Hash (${bundle.attestation.algorithm}): ${bundle.attestation.attestationHash.slice(0, 16)}…`
+    );
+
+    // Siempre materializar el dashboard local cuando hay PDF o HTML.
+    const wantsInteractive =
+      wantsPdf ||
+      outputFormats.includes('html') ||
+      outputFormats.includes('pdf');
+    if (wantsInteractive) {
+      generateHtmlReport(bundle, interactiveDashboardPath);
+      console.log(`Dashboard interactivo: ${interactiveDashboardPath}`);
+    }
 
     if (outputFormats.includes('json')) {
       const jsonPath = path.join(outputDir, 'findings.json');
@@ -420,6 +530,7 @@ void (async () => {
             target: bundle.target,
             timestamp: bundle.timestamp,
             environment: bundle.environment,
+            attestationHash: bundle.attestation.attestationHash,
             license: licenseInfo
               ? {
                   tier: licenseInfo.tier,
@@ -428,6 +539,7 @@ void (async () => {
                   status: licenseInfo.status
                 }
               : null,
+            attestation: bundle.attestation,
             scannedPages: bundle.scannedPages,
             digitalQualityScore: bundle.digitalQualityScore,
             maxCvssScore: bundle.maxCvssScore,
@@ -455,42 +567,100 @@ void (async () => {
 
     if (outputFormats.includes('html')) {
       const htmlPath = path.join(outputDir, 'report.html');
-      generateHtmlReport(bundle.findings, htmlPath);
+      generateHtmlReport(bundle, htmlPath);
       console.log(`Reporte HTML: ${htmlPath}`);
     }
 
     if (outputFormats.includes('markdown')) {
       const mdPath = path.join(outputDir, 'report.md');
-      generateMarkdownReport(bundle.findings, mdPath);
+      generateMarkdownReport(bundle, mdPath);
       console.log(`Reporte Markdown: ${mdPath}`);
     }
 
     if (wantsPdf) {
-      const pdfPath = opts.outputPdf
-        ? path.resolve(opts.outputPdf as string)
-        : path.join(outputDir, 'executive-report.pdf');
+      // Siempre dentro de outputDir (carpeta dominio_timestamp bajo audit-results).
+      const pdfFileName = opts.outputPdf
+        ? path.basename(String(opts.outputPdf))
+        : 'executive-report.pdf';
+      const pdfPath = path.join(outputDir, pdfFileName);
       await generatePdfReport(bundle, pdfPath);
       console.log(`Reporte PDF: ${pdfPath}`);
+      console.log(`Dashboard (local): ${interactiveDashboardPath}`);
     }
 
     if (ticketProvider) {
       const ticketFindings = bundle.findings.filter(
         (f) => f.severity === 'CRITICAL' || f.severity === 'HIGH'
       );
-      const payloads = buildTicketPayloads(ticketProvider, ticketFindings, {
+      const ticketContext = {
         projectKey: opts.ticketProject as string | undefined,
         areaPath: opts.ticketProject as string | undefined,
         gitlabProjectId: opts.ticketProject as string | undefined
-      });
+      };
+
+      // Siempre exportar payloads locales (artefacto CI).
+      const payloads = buildTicketPayloads(ticketProvider, ticketFindings, ticketContext);
       const ticketsPath = path.join(outputDir, `tickets-${ticketProvider}.json`);
       fs.writeFileSync(ticketsPath, JSON.stringify(payloads, null, 2), 'utf-8');
-      console.log(`Ticketing payloads (${ticketProvider}): ${ticketsPath} (${payloads.length})`);
+      console.log(
+        `Ticketing payloads (${ticketProvider}): ${ticketsPath} (${payloads.length})`
+      );
+
+      const ticketClient = new TicketClient();
+      const wantSubmit = Boolean(opts.ticketSubmit);
+      const submitResult = await ticketClient.submit({
+        provider: ticketProvider,
+        findings: ticketFindings,
+        context: ticketContext,
+        // dry-run por defecto; --ticket-submit opt-in + credenciales.
+        dryRun: !wantSubmit,
+        jira: {
+          domain: opts.jiraDomain as string | undefined,
+          email: opts.jiraEmail as string | undefined,
+          apiToken: opts.jiraToken as string | undefined,
+          projectKey: opts.ticketProject as string | undefined
+        },
+        azure: {
+          project: opts.ticketProject as string | undefined
+        },
+        gitlab: {
+          projectId: opts.ticketProject as string | undefined
+        }
+      });
+
+      const submitPath = path.join(outputDir, `tickets-${ticketProvider}-submit.json`);
+      fs.writeFileSync(submitPath, JSON.stringify(submitResult, null, 2), 'utf-8');
+
+      if (submitResult.dryRun) {
+        console.log(
+          `[Ticketing] DRY-RUN (${ticketProvider}): ${submitResult.skipped} issue(s) no enviados. ` +
+            `Use --ticket-submit + credenciales (JIRA_DOMAIN/JIRA_EMAIL/JIRA_API_TOKEN/JIRA_PROJECT_KEY).`
+        );
+      } else {
+        console.log(
+          `[Ticketing] HTTP (${ticketProvider}): submitted=${submitResult.submitted} failed=${submitResult.failed}`
+        );
+        for (const r of submitResult.results.filter((x) => x.ok && x.issueKey)) {
+          console.log(`  · ${r.ruleId} → ${r.issueKey}${r.issueUrl ? ` (${r.issueUrl})` : ''}`);
+        }
+        for (const r of submitResult.results.filter((x) => !x.ok)) {
+          console.warn(`  · FAIL ${r.ruleId}: ${r.error ?? r.status}`);
+        }
+      }
+      console.log(`Ticketing submit report: ${submitPath}`);
     }
 
     if (webhookUrl) {
-      const result = await notifyWebhook({ webhookUrl, bundle });
+      const result = await notifyWebhook({
+        webhookUrl,
+        bundle,
+        signingSecret: opts.webhookSecret as string | undefined
+      });
       if (result.ok) {
-        console.log(`Webhook (${result.channel}): notificado OK [${result.status}]`);
+        console.log(
+          `Webhook (${result.channel}): notificado OK [${result.status}]` +
+            (result.signed ? ' · signed' : '')
+        );
       } else {
         console.warn(
           `Webhook (${result.channel}): fallo — ${result.error ?? result.status ?? 'unknown'}`

@@ -123,6 +123,7 @@ export class CvssScorer {
   public isSecurityFinding(finding: AuditFinding): boolean {
     if (finding.category === 'SECURITY') return true;
     if (finding.ruleType === 'SECURITY_FINDING') return true;
+    if (finding.ruleType === 'SECURITY_HEADER') return true;
     if (finding.ruleId.startsWith('SEC-')) return true;
     if (finding.ruleId.startsWith('NET-') && /COOKIE|MIXED|HDR/i.test(finding.ruleId)) {
       return true;

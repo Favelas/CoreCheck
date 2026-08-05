@@ -1,3 +1,5 @@
+import { createHmac } from 'node:crypto';
+
 import {
   AuditReportBundle,
   SeverityLevel,
@@ -8,44 +10,78 @@ export interface WebhookNotifyResult {
   ok: boolean;
   status?: number;
   channel: 'slack' | 'teams' | 'generic';
+  dryRun?: boolean;
+  signed?: boolean;
   error?: string;
 }
 
 /**
  * Notificador CI/CD para Slack Incoming Webhooks, Microsoft Teams
- * y webhooks genéricos JSON.
+ * y webhooks genéricos JSON (Zapier/n8n) con firma HMAC opcional.
  */
 export class WebhookNotifier {
   public async notify(options: WebhookNotifyOptions): Promise<WebhookNotifyResult> {
-    const channel =
-      options.channel ?? this.inferChannel(options.webhookUrl);
+    const channel = options.channel ?? this.inferChannel(options.webhookUrl);
+    const secret =
+      options.signingSecret?.trim() ||
+      process.env.CORECHECK_WEBHOOK_SECRET?.trim() ||
+      '';
+    const dryRun = options.dryRun === true;
+
     const payload = this.buildPayload(channel, options.bundle);
+    const body = JSON.stringify(payload);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'CoreCheck-Webhook/1.0',
+      'X-CoreCheck-Timestamp': timestamp,
+      'X-CoreCheck-Event': String(payload.event ?? 'corecheck_audit')
+    };
+
+    let signed = false;
+    if (secret) {
+      headers['X-CoreCheck-Signature'] = `sha256=${this.signPayload(secret, timestamp, body)}`;
+      signed = true;
+    }
+
+    if (dryRun) {
+      return { ok: true, channel, dryRun: true, signed };
+    }
 
     try {
       const response = await fetch(options.webhookUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers,
+        body
       });
 
       if (!response.ok) {
-        const body = await response.text().catch(() => '');
+        const errBody = await response.text().catch(() => '');
         return {
           ok: false,
           status: response.status,
           channel,
-          error: body.slice(0, 500) || response.statusText
+          signed,
+          error: errBody.slice(0, 500) || response.statusText
         };
       }
 
-      return { ok: true, status: response.status, channel };
+      return { ok: true, status: response.status, channel, signed };
     } catch (error) {
       return {
         ok: false,
         channel,
+        signed,
         error: (error as Error).message
       };
     }
+  }
+
+  /** HMAC-SHA256(timestamp + '.' + body) — compatible con Zapier/n8n verify. */
+  public signPayload(secret: string, timestamp: string, body: string): string {
+    return createHmac('sha256', secret)
+      .update(`${timestamp}.${body}`, 'utf8')
+      .digest('hex');
   }
 
   public inferChannel(webhookUrl: string): 'slack' | 'teams' | 'generic' {
@@ -81,6 +117,7 @@ export class WebhookNotifier {
       .join(' · ');
 
     return {
+      event: bundle.gateFailed ? 'quality_gate_failed' : 'quality_gate_passed',
       text: `CoreCheck ${bundle.gateFailed ? 'GATE FAIL' : 'GATE PASS'} — ${bundle.target}`,
       blocks: [
         {
@@ -121,7 +158,11 @@ export class WebhookNotifier {
           elements: [
             {
               type: 'mrkdwn',
-              text: `Compliance mapped: ${bundle.compliance.mappedFindingCount} · ${bundle.timestamp}`
+              text:
+                `Compliance mapped: ${bundle.compliance.mappedFindingCount} · ${bundle.timestamp}` +
+                (bundle.attestation
+                  ? ` · Hash ${bundle.attestation.attestationHash.slice(0, 12)}`
+                  : '')
             }
           ]
         }
@@ -141,6 +182,13 @@ export class WebhookNotifier {
       { name: 'Total findings', value: String(bundle.findings.length) },
       { name: 'Severity', value: this.severityLine(bundle) }
     ];
+
+    if (bundle.attestation?.attestationHash) {
+      facts.push({
+        name: 'Attestation Hash',
+        value: bundle.attestation.attestationHash.slice(0, 32) + '…'
+      });
+    }
 
     for (const dim of bundle.dimensions) {
       facts.push({
@@ -176,6 +224,7 @@ export class WebhookNotifier {
       failOn: bundle.failOn,
       findingsTotal: bundle.findings.length,
       severityCounts: bundle.severityCounts,
+      attestationHash: bundle.attestation?.attestationHash ?? null,
       dimensions: bundle.dimensions.map((d) => ({
         dimension: d.dimension,
         score: d.score,
@@ -196,7 +245,8 @@ export class WebhookNotifier {
           ruleId: f.ruleId,
           severity: f.severity,
           title: f.title,
-          url: f.evidence.url
+          url: f.evidence.url,
+          evidence: f.evidence.snippet?.slice(0, 512)
         }))
     };
   }

@@ -256,7 +256,19 @@ export async function exportToSarif(
               failOn: bundle.failOn,
               environment: bundle.environment,
               suppressedCount: bundle.suppressedCount,
-              scannedPages: bundle.scannedPages
+              scannedPages: bundle.scannedPages,
+              attestation: bundle.attestation
+                ? {
+                    attestationHash: bundle.attestation.attestationHash,
+                    auditHash: bundle.attestation.auditHash,
+                    algorithm: bundle.attestation.algorithm,
+                    hmacSignature: bundle.attestation.hmacSignature ?? null,
+                    cliVersion: bundle.attestation.cliVersion,
+                    signedAtUtc: bundle.attestation.signedAtUtc,
+                    verificationUrl: bundle.attestation.verificationUrl,
+                    dashboardUrl: bundle.attestation.dashboardUrl
+                  }
+                : undefined
             }
           : undefined
       }

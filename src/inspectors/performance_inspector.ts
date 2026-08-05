@@ -4,14 +4,16 @@ import { AuditFinding } from '../types/audit.js';
 
 const LCP_BUDGET_MS = 2500;
 const CLS_BUDGET = 0.1;
+const INP_BUDGET_MS = 200;
+const INP_POOR_MS = 500;
 const DCL_BUDGET_MS = 3000;
 const LOAD_BUDGET_MS = 5000;
-const LARGE_IMAGE_BYTES = 500 * 1024;
 const LARGE_ASSET_BYTES = 1024 * 1024;
 
 interface PerfMetrics {
   lcpMs: number | null;
   cls: number | null;
+  inpMs: number | null;
   domContentLoadedMs: number | null;
   loadEventMs: number | null;
 }
@@ -25,7 +27,7 @@ interface ResourceSample {
 }
 
 /**
- * Métricas Web Vitals básicas + optimización de assets (imágenes / compresión).
+ * Métricas Web Vitals (LCP/CLS/INP) + optimización de assets.
  */
 export class PerformanceInspector {
   private readonly responses: Response[] = [];
@@ -33,7 +35,7 @@ export class PerformanceInspector {
 
   constructor(private readonly page: Page) {}
 
-  /** Adjuntar antes de page.goto para capturar respuestas de red. */
+  /** Adjuntar antes de page.goto para capturar respuestas de red y observers. */
   public attach(): void {
     if (this.attached) {
       return;
@@ -43,36 +45,48 @@ export class PerformanceInspector {
       this.responses.push(response);
     });
 
-    void this.page.addInitScript(() => {
-      const w = window as unknown as {
-        __corecheckLcp?: number;
-        __corecheckCls?: number;
-      };
-      w.__corecheckLcp = 0;
-      w.__corecheckCls = 0;
+    void this.page.addInitScript(`(() => {
+      window.__corecheckLcp = 0;
+      window.__corecheckCls = 0;
+      window.__corecheckInpMax = 0;
+      window.__corecheckInpSamples = [];
       try {
-        new PerformanceObserver((list) => {
-          for (const entry of list.getEntries()) {
-            w.__corecheckLcp = entry.startTime;
+        new PerformanceObserver(function (list) {
+          var entries = list.getEntries();
+          for (var i = 0; i < entries.length; i++) {
+            window.__corecheckLcp = entries[i].startTime;
           }
-        }).observe({ type: 'largest-contentful-paint', buffered: true } as PerformanceObserverInit);
-      } catch {
-        // unsupported
-      }
+        }).observe({ type: 'largest-contentful-paint', buffered: true });
+      } catch (e) {}
       try {
-        new PerformanceObserver((list) => {
-          for (const entry of list.getEntries() as Array<
-            PerformanceEntry & { value?: number; hadRecentInput?: boolean }
-          >) {
+        new PerformanceObserver(function (list) {
+          var entries = list.getEntries();
+          for (var i = 0; i < entries.length; i++) {
+            var entry = entries[i];
             if (!entry.hadRecentInput) {
-              w.__corecheckCls = (w.__corecheckCls || 0) + (entry.value || 0);
+              window.__corecheckCls = (window.__corecheckCls || 0) + (entry.value || 0);
             }
           }
-        }).observe({ type: 'layout-shift', buffered: true } as PerformanceObserverInit);
-      } catch {
-        // unsupported
-      }
-    });
+        }).observe({ type: 'layout-shift', buffered: true });
+      } catch (e) {}
+      try {
+        new PerformanceObserver(function (list) {
+          var entries = list.getEntries();
+          for (var i = 0; i < entries.length; i++) {
+            var entry = entries[i];
+            var dur = entry.duration || 0;
+            if (dur > (window.__corecheckInpMax || 0)) {
+              window.__corecheckInpMax = dur;
+            }
+            window.__corecheckInpSamples.push({
+              name: entry.name,
+              duration: dur,
+              startTime: entry.startTime
+            });
+          }
+        }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
+      } catch (e) {}
+    })()`);
   }
 
   public async inspect(pageUrl: string): Promise<AuditFinding[]> {
@@ -80,65 +94,133 @@ export class PerformanceInspector {
 
     await this.page.waitForTimeout(600).catch(() => {});
 
+    // Sintetiza una interacción para alimentar Event Timing / medir latencia.
+    await this.synthesizeInteraction().catch(() => {});
+
     const metrics = await this.collectMetrics();
     findings.push(...this.findingsFromMetrics(pageUrl, metrics));
     findings.push(...(await this.inspectImages(pageUrl)));
     findings.push(...(await this.inspectCompressionAndAssets(pageUrl)));
+    findings.push(...(await this.inspectInpHeuristics(pageUrl)));
 
     return findings;
   }
 
-  private async collectMetrics(): Promise<PerfMetrics> {
-    return this.page.evaluate(() => {
-      const w = window as unknown as {
-        __corecheckLcp?: number;
-        __corecheckCls?: number;
-      };
-      const nav = performance.getEntriesByType('navigation')[0] as
-        | PerformanceNavigationTiming
-        | undefined;
+  /**
+   * Dispara un click seguro en un control interactivo same-page para observar INP.
+   */
+  private async synthesizeInteraction(): Promise<void> {
+    const selectorRaw = await this.page
+      .evaluate(`(() => {
+        var candidates = Array.from(document.querySelectorAll(
+          'button:not([disabled]), [role="button"], a[href], input[type="button"], input[type="submit"]'
+        ));
+        for (var i = 0; i < candidates.length; i++) {
+          var el = candidates[i];
+          var rect = el.getBoundingClientRect();
+          if (rect.width < 8 || rect.height < 8) continue;
+          if (rect.bottom < 0 || rect.top > (window.innerHeight || 800)) continue;
+          if (el.tagName === 'A') {
+            var href = (el.getAttribute('href') || '').trim();
+            if (!href || href.startsWith('#') || href.startsWith('javascript:')) {
+              // ok
+            } else {
+              try {
+                var u = new URL(href, location.href);
+                if (u.origin !== location.origin) continue;
+                if (u.pathname !== location.pathname && !href.startsWith('#')) continue;
+              } catch (e) { continue; }
+            }
+          }
+          el.setAttribute('data-corecheck-inp', '1');
+          return '[data-corecheck-inp="1"]';
+        }
+        return null;
+      })()`)
+      .catch(() => null);
 
-      let lcpMs: number | null = null;
-      const lcpEntries = performance.getEntriesByType('largest-contentful-paint') as Array<{
-        startTime: number;
-      }>;
+    const selector = typeof selectorRaw === 'string' ? selectorRaw : null;
+    if (!selector) {
+      return;
+    }
+
+    const started = Date.now();
+    await this.page
+      .locator(selector)
+      .first()
+      .click({ timeout: 1500, noWaitAfter: true })
+      .catch(() => {});
+    await this.page
+      .evaluate(`(() => new Promise(function (resolve) {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { resolve(true); });
+      });
+    }))()`)
+      .catch(() => {});
+    await this.page.waitForTimeout(120).catch(() => {});
+
+    const syntheticMs = Date.now() - started;
+    await this.page
+      .evaluate(
+        `((ms) => {
+        if (!window.__corecheckInpMax || ms > window.__corecheckInpMax) {
+          window.__corecheckInpMax = ms;
+        }
+        window.__corecheckInpSamples = window.__corecheckInpSamples || [];
+        window.__corecheckInpSamples.push({ name: 'synthetic-click', duration: ms, startTime: 0 });
+      })(${JSON.stringify(syntheticMs)})`
+      )
+      .catch(() => {});
+  }
+
+  private async collectMetrics(): Promise<PerfMetrics> {
+    return this.page.evaluate(`(() => {
+      var w = window;
+      var navEntries = performance.getEntriesByType('navigation');
+      var nav = navEntries.length > 0 ? navEntries[0] : null;
+
+      var lcpMs = null;
+      var lcpEntries = performance.getEntriesByType('largest-contentful-paint');
       if (lcpEntries.length > 0) {
         lcpMs = lcpEntries[lcpEntries.length - 1].startTime;
       } else if (w.__corecheckLcp && w.__corecheckLcp > 0) {
         lcpMs = w.__corecheckLcp;
       } else {
-        const paints = performance.getEntriesByType('paint');
-        const fcp = paints.find((p) => p.name === 'first-contentful-paint');
-        if (fcp) {
-          lcpMs = fcp.startTime;
+        var paints = performance.getEntriesByType('paint');
+        for (var i = 0; i < paints.length; i++) {
+          if (paints[i].name === 'first-contentful-paint') {
+            lcpMs = paints[i].startTime;
+            break;
+          }
         }
       }
 
-      let cls: number | null = null;
-      const layoutShifts = performance.getEntriesByType('layout-shift') as unknown as Array<{
-        value: number;
-        hadRecentInput?: boolean;
-      }>;
+      var cls = null;
+      var layoutShifts = performance.getEntriesByType('layout-shift');
       if (layoutShifts.length > 0) {
         cls = 0;
-        for (const entry of layoutShifts) {
-          if (!entry.hadRecentInput) {
-            cls += entry.value;
+        for (var j = 0; j < layoutShifts.length; j++) {
+          if (!layoutShifts[j].hadRecentInput) {
+            cls += layoutShifts[j].value;
           }
         }
       } else if (typeof w.__corecheckCls === 'number') {
         cls = w.__corecheckCls;
       }
 
+      var inpMs = null;
+      if (typeof w.__corecheckInpMax === 'number' && w.__corecheckInpMax > 0) {
+        inpMs = w.__corecheckInpMax;
+      }
+
       return {
-        lcpMs,
-        cls,
-        domContentLoadedMs: nav
-          ? nav.domContentLoadedEventEnd - nav.startTime
-          : null,
+        lcpMs: lcpMs,
+        cls: cls,
+        inpMs: inpMs,
+        domContentLoadedMs: nav ? nav.domContentLoadedEventEnd - nav.startTime : null,
         loadEventMs: nav ? nav.loadEventEnd - nav.startTime : null
       };
-    });
+    })()`) as Promise<PerfMetrics>;
   }
 
   private findingsFromMetrics(pageUrl: string, metrics: PerfMetrics): AuditFinding[] {
@@ -162,7 +244,8 @@ export class PerformanceInspector {
           explanation:
             'Optimice la imagen/elemento LCP (preload, formatos modernos, CDN, SSR del above-the-fold).',
           codeBefore: '<img src="hero.jpg">',
-          codeAfter: '<link rel="preload" as="image" href="hero.webp">\n<img src="hero.webp" fetchpriority="high">'
+          codeAfter:
+            '<link rel="preload" as="image" href="hero.webp">\n<img src="hero.webp" fetchpriority="high">'
         },
         standards: { owasp: [], cwe: [] }
       });
@@ -185,7 +268,35 @@ export class PerformanceInspector {
           explanation:
             'Reserve espacio (width/height o aspect-ratio) en imágenes/embeds y evite inyecciones late de banners.',
           codeBefore: '<img src="banner.jpg">',
-          codeAfter: '<img src="banner.jpg" width="1200" height="400" style="aspect-ratio:3/1">'
+          codeAfter:
+            '<img src="banner.jpg" width="1200" height="400" style="aspect-ratio:3/1">'
+        },
+        standards: { owasp: [], cwe: [] }
+      });
+    }
+
+    if (metrics.inpMs !== null && metrics.inpMs > INP_BUDGET_MS) {
+      findings.push({
+        id: `PERF-INP-${Date.now()}-${uid()}`,
+        ruleId: 'PERF-INP-SLOW',
+        title: 'INP por encima del presupuesto (200ms)',
+        severity: metrics.inpMs >= INP_POOR_MS ? 'HIGH' : 'MEDIUM',
+        description:
+          `Interaction to Next Paint (aproximado) = ${Math.round(metrics.inpMs)}ms ` +
+          `(bueno ≤ ${INP_BUDGET_MS}ms; pobre ≥ ${INP_POOR_MS}ms). ` +
+          'Medido vía Event Timing API y/o click sintético Playwright.',
+        category: 'PERFORMANCE',
+        ruleType: 'PERF_WEB_VITAL',
+        evidence: {
+          url: pageUrl,
+          snippet: `INP≈${Math.round(metrics.inpMs)}ms`
+        },
+        remediation: {
+          explanation:
+            'Rompa long tasks en handlers de input, deferra trabajo no crítico con scheduler.yield/requestIdleCallback y evite re-renders bloqueantes.',
+          codeBefore: 'button.onclick = () => { heavySyncWork(); updateUI(); }',
+          codeAfter:
+            'button.onclick = async () => { await scheduler.yield?.(); updateUI(); queueMicrotask(heavySyncWork); }'
         },
         standards: { owasp: [], cwe: [] }
       });
@@ -238,29 +349,110 @@ export class PerformanceInspector {
     return findings;
   }
 
+  /** Heurísticas de handlers costosos / falta de optimización de input. */
+  private async inspectInpHeuristics(pageUrl: string): Promise<AuditFinding[]> {
+    const findings: AuditFinding[] = [];
+    const uid = () => Math.random().toString(36).slice(2, 7);
+
+    const report = (await this.page
+      .evaluate(`(() => {
+        var scripts = Array.from(document.scripts).map(function (s) {
+          return (s.src || '').toLowerCase();
+        }).filter(Boolean);
+        var nodes = document.querySelectorAll('[onclick], [oninput], [onkeydown], [onscroll]');
+        return {
+          thirdPartyLikely: scripts.filter(function (s) {
+            return /googletagmanager|facebook|hotjar|segment|fullstory|clarity/.test(s);
+          }).length,
+          inlineHandlers: nodes.length,
+          interactiveCount: document.querySelectorAll('button, a[href], input, textarea, select').length
+        };
+      })()`)
+      .catch(() => null)) as {
+      thirdPartyLikely: number;
+      inlineHandlers: number;
+      interactiveCount: number;
+    } | null;
+
+    if (!report) return findings;
+
+    if (report.inlineHandlers >= 8) {
+      findings.push({
+        id: `PERF-INP-HANDLERS-${Date.now()}-${uid()}`,
+        ruleId: 'PERF-INP-INLINE-HANDLERS',
+        title: 'Muchos handlers inline de input (riesgo INP)',
+        severity: 'LOW',
+        description:
+          `Se detectaron ${report.inlineHandlers} atributos on* inline. ` +
+          'Handlers síncronos en el critical path degradan Interaction to Next Paint.',
+        category: 'PERFORMANCE',
+        ruleType: 'PERF_WEB_VITAL',
+        evidence: {
+          url: pageUrl,
+          snippet: `inlineHandlers=${report.inlineHandlers}; interactive=${report.interactiveCount}`
+        },
+        remediation: {
+          explanation:
+            'Migre a addEventListener con lógica asíncrona y evite trabajo pesado en el primer turno del evento.',
+          codeBefore: '<button onclick="heavy()">',
+          codeAfter: "button.addEventListener('click', () => queueMicrotask(heavy))"
+        },
+        standards: { owasp: [], cwe: [] }
+      });
+    }
+
+    if (report.thirdPartyLikely >= 3 && report.interactiveCount > 0) {
+      findings.push({
+        id: `PERF-INP-3P-${Date.now()}-${uid()}`,
+        ruleId: 'PERF-INP-THIRD-PARTY-RISK',
+        title: 'Scripts de terceros que pueden degradar INP',
+        severity: 'INFO',
+        description:
+          `${report.thirdPartyLikely} script(s) de analytics/tag managers detectados. ` +
+          'Tags síncronos compiten con handlers de interacción.',
+        category: 'PERFORMANCE',
+        ruleType: 'PERF_WEB_VITAL',
+        evidence: {
+          url: pageUrl,
+          snippet: `thirdPartyLikely=${report.thirdPartyLikely}`
+        },
+        remediation: {
+          explanation:
+            'Cargue tags con defer/partytown/worker y retarde hasta después de la primera interacción.',
+          codeBefore: '<script src="https://www.googletagmanager.com/gtm.js">',
+          codeAfter: '<script src="gtm.js" defer data-priority="low">'
+        },
+        standards: { owasp: [], cwe: [] }
+      });
+    }
+
+    return findings;
+  }
+
   private async inspectImages(pageUrl: string): Promise<AuditFinding[]> {
     const findings: AuditFinding[] = [];
     const uid = () => Math.random().toString(36).slice(2, 7);
 
-    const heavyImages = await this.page
-      .evaluate((limitBytes) => {
-        const imgs = Array.from(document.querySelectorAll('img'));
-        const heavy: Array<{ src: string; naturalWidth: number; naturalHeight: number }> = [];
-        for (const img of imgs) {
-          const pixels = img.naturalWidth * img.naturalHeight;
-          // Heurística: > 2MP sin srcset / sizes sugiere asset sobredimensionado.
-          if (pixels > 2_000_000 && !img.srcset) {
+    const heavyImages = (await this.page
+      .evaluate(`(() => {
+        var imgs = Array.from(document.querySelectorAll('img'));
+        var heavy = [];
+        for (var i = 0; i < imgs.length; i++) {
+          var img = imgs[i];
+          var pixels = img.naturalWidth * img.naturalHeight;
+          if (pixels > 2000000 && !img.srcset) {
             heavy.push({
               src: img.currentSrc || img.src,
               naturalWidth: img.naturalWidth,
               naturalHeight: img.naturalHeight
             });
           }
-          void limitBytes;
         }
         return heavy.slice(0, 8);
-      }, LARGE_IMAGE_BYTES)
-      .catch(() => [] as Array<{ src: string; naturalWidth: number; naturalHeight: number }>);
+      })()`)
+      .catch(
+        () => [] as Array<{ src: string; naturalWidth: number; naturalHeight: number }>
+      )) as Array<{ src: string; naturalWidth: number; naturalHeight: number }>;
 
     for (const img of heavyImages) {
       findings.push({
@@ -279,7 +471,8 @@ export class PerformanceInspector {
         remediation: {
           explanation: 'Sirva variantes responsive (srcset/sizes) y formatos AVIF/WebP.',
           codeBefore: `<img src="${img.src.slice(0, 60)}">`,
-          codeAfter: '<img src="hero-800.webp" srcset="hero-400.webp 400w, hero-800.webp 800w" sizes="100vw">'
+          codeAfter:
+            '<img src="hero-800.webp" srcset="hero-400.webp 400w, hero-800.webp 800w" sizes="100vw">'
         },
         standards: { owasp: [], cwe: [] }
       });
@@ -355,7 +548,9 @@ export class PerformanceInspector {
     }
 
     const huge = samples.filter(
-      (s) => s.transferSize >= LARGE_ASSET_BYTES && ['script', 'stylesheet'].includes(s.resourceType)
+      (s) =>
+        s.transferSize >= LARGE_ASSET_BYTES &&
+        ['script', 'stylesheet'].includes(s.resourceType)
     );
     for (const asset of huge.slice(0, 5)) {
       findings.push({
@@ -368,10 +563,14 @@ export class PerformanceInspector {
         ruleType: 'PERF_ASSET_OPTIMIZATION',
         evidence: {
           url: pageUrl,
-          snippet: `${asset.resourceType} ${asset.transferSize}B :: ${asset.url}`.slice(0, 2048)
+          snippet: `${asset.resourceType} ${asset.transferSize}B :: ${asset.url}`.slice(
+            0,
+            2048
+          )
         },
         remediation: {
-          explanation: 'Aplique code-splitting, tree-shaking y elimine dependencias pesadas del critical path.',
+          explanation:
+            'Aplique code-splitting, tree-shaking y elimine dependencias pesadas del critical path.',
           codeBefore: 'import "./monolith-bundle.js"',
           codeAfter: 'const mod = await import("./route-chunk.js")'
         },

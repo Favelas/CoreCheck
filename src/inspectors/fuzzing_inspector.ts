@@ -64,9 +64,7 @@ export class FuzzingInspector {
 
           try {
             // Inicializar bandera de prueba XSS en el contexto del navegador
-            await this.page.evaluate(() => {
-              (window as any).__corecheck_xss = false;
-            }).catch(() => {});
+            await this.page.evaluate(`(() => { window.__corecheck_xss = false; })()`).catch(() => {});
 
             // Inyección de payload
             await input.focus();
@@ -81,7 +79,7 @@ export class FuzzingInspector {
             // 1. Verificación de Inyección XSS Ejecutada
             if (payload.type === 'XSS') {
               const isXssTriggered = await this.page
-                .evaluate(() => (window as any).__corecheck_xss === true)
+                .evaluate(`(() => window.__corecheck_xss === true)()`)
                 .catch(() => false);
 
               if (isXssTriggered) {

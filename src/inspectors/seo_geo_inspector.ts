@@ -343,76 +343,88 @@ export class SeoGeoInspector {
   }
 
   private async collectDom(_pageUrl: string): Promise<SeoDomSnapshot> {
-    return this.page.evaluate(() => {
-      const meta = (name: string) =>
-        document.querySelector(`meta[name="${name}"]`)?.getAttribute('content')?.trim() || '';
-      const og = (prop: string) =>
-        document.querySelector(`meta[property="${prop}"]`)?.getAttribute('content')?.trim() || '';
+    // String IIFE: evita que tsx/esbuild inyecte __name (rompe page.evaluate en Chromium).
+    return this.page.evaluate(`(() => {
+      function meta(name) {
+        var el = document.querySelector('meta[name="' + name + '"]');
+        var content = el ? el.getAttribute('content') : null;
+        return (content || '').trim();
+      }
+      function og(prop) {
+        var el = document.querySelector('meta[property="' + prop + '"]');
+        var content = el ? el.getAttribute('content') : null;
+        return (content || '').trim();
+      }
 
-      const h1s = Array.from(document.querySelectorAll('h1')).map(
-        (el) => (el.textContent || '').trim().slice(0, 80)
-      );
-      const h2Count = document.querySelectorAll('h2').length;
+      var h1Nodes = Array.from(document.querySelectorAll('h1'));
+      var h1s = h1Nodes.map(function (el) {
+        return (el.textContent || '').trim().slice(0, 80);
+      });
+      var h2Count = document.querySelectorAll('h2').length;
 
-      const jsonLdNodes = Array.from(
+      var jsonLdNodes = Array.from(
         document.querySelectorAll('script[type="application/ld+json"]')
       );
-      const jsonLdTypes: string[] = [];
-      for (const node of jsonLdNodes) {
+      var jsonLdTypes = [];
+      for (var i = 0; i < jsonLdNodes.length; i++) {
         try {
-          const data = JSON.parse(node.textContent || '{}') as { '@type'?: string | string[] };
-          const t = data['@type'];
+          var data = JSON.parse(jsonLdNodes[i].textContent || '{}');
+          var t = data['@type'];
           if (Array.isArray(t)) {
-            jsonLdTypes.push(...t.map(String));
+            for (var j = 0; j < t.length; j++) jsonLdTypes.push(String(t[j]));
           } else if (t) {
             jsonLdTypes.push(String(t));
           }
-        } catch {
-          // ignore invalid JSON-LD
-        }
+        } catch (e) {}
       }
 
-      const mainEl =
+      var mainEl =
         document.querySelector('main') ||
         document.querySelector('[role="main"]') ||
         document.querySelector('article');
-      const textRoot = mainEl || document.body;
-      const articleOrMainTextLength = (textRoot?.innerText || '').replace(/\s+/g, ' ').trim()
-        .length;
+      var textRoot = mainEl || document.body;
+      var articleOrMainTextLength = (textRoot && textRoot.innerText ? textRoot.innerText : '')
+        .replace(/\\s+/g, ' ')
+        .trim().length;
 
-      const headingLevels = Array.from(
-        document.querySelectorAll('h1,h2,h3,h4,h5,h6')
-      ).map((el) => Number(el.tagName.substring(1)));
-      let headingOutlineBroken = false;
-      for (let i = 1; i < headingLevels.length; i++) {
-        if (headingLevels[i] - headingLevels[i - 1] > 1) {
+      var headingNodes = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'));
+      var headingLevels = headingNodes.map(function (el) {
+        return Number(el.tagName.substring(1));
+      });
+      var headingOutlineBroken = false;
+      for (var k = 1; k < headingLevels.length; k++) {
+        if (headingLevels[k] - headingLevels[k - 1] > 1) {
           headingOutlineBroken = true;
           break;
         }
       }
 
+      var langAttr = document.documentElement.getAttribute('lang') || '';
+
       return {
         title: document.title || '',
         metaDescription: meta('description'),
-        canonical:
-          document.querySelector('link[rel="canonical"]')?.getAttribute('href')?.trim() || '',
+        canonical: (function () {
+          var c = document.querySelector('link[rel="canonical"]');
+          return c ? (c.getAttribute('href') || '').trim() : '';
+        })(),
         robotsMeta: meta('robots'),
         h1Count: h1s.length,
-        h2Count,
+        h2Count: h2Count,
         h1Texts: h1s,
         jsonLdCount: jsonLdNodes.length,
-        jsonLdTypes,
+        jsonLdTypes: jsonLdTypes,
         ogTitle: og('og:title'),
         ogImage: og('og:image'),
         ogDescription: og('og:description'),
         mainLandmark: !!(
           document.querySelector('main') || document.querySelector('[role="main"]')
         ),
-        articleOrMainTextLength,
-        hasLang: !!(document.documentElement.getAttribute('lang') || '').trim(),
-        headingOutlineBroken
+        articleOrMainTextLength: articleOrMainTextLength,
+        hasLang: !!langAttr.trim(),
+        headingOutlineBroken: headingOutlineBroken
       };
-    });
+    })()`) as Promise<SeoDomSnapshot>;
   }
 
   private async inspectRobotsTxt(

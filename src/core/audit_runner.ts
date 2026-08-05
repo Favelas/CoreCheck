@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import * as path from 'node:path';
 import { Browser, BrowserContext, Response, chromium } from 'playwright';
 
 import { ConsoleDataInspector } from '../inspectors/console_data_inspector.js';
@@ -10,6 +11,7 @@ import { NetworkPassiveInspector } from '../inspectors/network_passive_inspector
 import { PerformanceInspector } from '../inspectors/performance_inspector.js';
 import { PrivacyInspector } from '../inspectors/privacy_inspector.js';
 import { SeoGeoInspector } from '../inspectors/seo_geo_inspector.js';
+import { LlmReadinessInspector } from '../inspectors/llm_readiness_inspector.js';
 import { VisualMetaInspector } from '../inspectors/visual_meta_inspector.js';
 import {
   AuditAuthConfig,
@@ -19,6 +21,7 @@ import {
   FindingLocation,
   OutputFormat
 } from '../types/audit.js';
+import { sanitizeAndBudgetEvidence } from '../utils/evidence.js';
 import { AuthHandler } from './auth_handler.js';
 import { SiteCrawler } from './crawler.js';
 import { ZeroFPEngine } from './zero_fp_engine.js';
@@ -134,20 +137,41 @@ export class AuditRunner {
       console.log(`[Crawler] Páginas a auditar (${scannedPages.length}):`);
       scannedPages.forEach((url, index) => console.log(`  ${index + 1}. ${url}`));
 
-      for (let i = 0; i < scannedPages.length; i++) {
-        const pageUrl = scannedPages[i];
-        console.log(`[Audit] (${i + 1}/${scannedPages.length}) ${pageUrl}`);
+      const concurrency = Math.max(1, Math.floor(this.options.concurrency) || 1);
+      const artifactsDir = path.join(baseDir, 'artifacts');
+      console.log(
+        `[Audit] Escaneo de páginas con concurrency=${concurrency}` +
+          (concurrency > 1
+            ? ' (contextos Playwright en paralelo; Zero-FP sigue serial)'
+            : '')
+      );
 
-        const pageFindings = await this.auditSinglePage(
-          browser,
-          contextOptions,
-          contextsToClose,
-          pageUrl,
-          baseDir,
-          i === 0
-        );
-        allFindings.push(...this.stampPageUrl(pageFindings, pageUrl));
-      }
+      // Pool de workers: paraleliza auditSinglePage respetando --concurrency.
+      // Límite: cada worker abre su propio BrowserContext; valores altos aumentan
+      // presión de memoria/CPU en runners CI. Zero-FP permanece serial post-dedup.
+      let cursor = 0;
+      const workerCount = Math.min(concurrency, scannedPages.length);
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (true) {
+          const i = cursor++;
+          if (i >= scannedPages.length) {
+            return;
+          }
+          const pageUrl = scannedPages[i];
+          console.log(`[Audit] (${i + 1}/${scannedPages.length}) ${pageUrl}`);
+
+          const pageFindings = await this.auditSinglePage(
+            browser!,
+            contextOptions,
+            contextsToClose,
+            pageUrl,
+            baseDir,
+            i === 0
+          );
+          allFindings.push(...this.stampPageUrl(pageFindings, pageUrl, artifactsDir));
+        }
+      });
+      await Promise.all(workers);
 
       const deduped = this.deduplicateFindings(allFindings);
 
@@ -280,6 +304,8 @@ export class AuditRunner {
     inspectorTasks.push(networkInspector.collect());
     inspectorTasks.push(performanceInspector.inspect(pageUrl));
     inspectorTasks.push(new SeoGeoInspector(page).inspect(pageUrl));
+    // llm.txt es origin-scoped; se ejecuta en todas las páginas y el consolidator lo fusiona.
+    inspectorTasks.push(new LlmReadinessInspector(page).inspect(pageUrl));
     inspectorTasks.push(privacyInspector.inspect(pageUrl));
     inspectorTasks.push(
       visualMetaInspector.inspectMetadata().then((issues) =>
@@ -363,29 +389,51 @@ export class AuditRunner {
     return findings;
   }
 
-  private stampPageUrl(findings: AuditFinding[], pageUrl: string): AuditFinding[] {
+  private stampPageUrl(
+    findings: AuditFinding[],
+    pageUrl: string,
+    artifactsDir: string
+  ): AuditFinding[] {
     return findings.map((finding) => {
+      const budgeted = sanitizeAndBudgetEvidence(
+        finding.id,
+        finding.evidence.snippet,
+        artifactsDir
+      );
+
       const baseLocations: FindingLocation[] =
         finding.evidence.locations ??
-        (finding.evidence.selector || finding.evidence.snippet
+        (finding.evidence.selector || finding.evidence.snippet || budgeted.snippet
           ? [
               {
                 selector: finding.evidence.selector,
-                snippet: finding.evidence.snippet
+                snippet: budgeted.snippet ?? finding.evidence.snippet
               }
             ]
           : []);
 
-      const locations = baseLocations.map((loc) => ({
-        ...loc,
-        url: loc.url ?? pageUrl
-      }));
+      const locations = baseLocations.map((loc) => {
+        const locBudget = sanitizeAndBudgetEvidence(
+          `${finding.id}-loc`,
+          loc.snippet,
+          artifactsDir
+        );
+        return {
+          ...loc,
+          snippet: locBudget.snippet ?? loc.snippet,
+          url: loc.url ?? pageUrl
+        };
+      });
 
       return {
         ...finding,
         evidence: {
           ...finding.evidence,
           url: finding.evidence.url ?? pageUrl,
+          snippet: budgeted.snippet ?? finding.evidence.snippet,
+          ...(budgeted.artifactPath
+            ? { artifactPath: finding.evidence.artifactPath ?? budgeted.artifactPath }
+            : {}),
           ...(locations.length > 0 ? { locations } : {})
         }
       };

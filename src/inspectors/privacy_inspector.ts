@@ -294,9 +294,9 @@ export class PrivacyInspector {
 
   private async detectConsentUi(): Promise<boolean> {
     return this.page
-      .evaluate(() => {
-        const text = (document.body?.innerText || '').toLowerCase();
-        const keywords = [
+      .evaluate(`(() => {
+        var text = (document.body && document.body.innerText ? document.body.innerText : '').toLowerCase();
+        var keywords = [
           'accept cookies',
           'aceptar cookies',
           'cookie consent',
@@ -306,10 +306,10 @@ export class PrivacyInspector {
           'privacy preferences',
           'consentimiento'
         ];
-        if (keywords.some((k) => text.includes(k))) {
-          return true;
+        for (var i = 0; i < keywords.length; i++) {
+          if (text.indexOf(keywords[i]) !== -1) return true;
         }
-        const selectors = [
+        var selectors = [
           '#onetrust-banner-sdk',
           '#cybotCookiebotDialog',
           '.cc-window',
@@ -318,30 +318,34 @@ export class PrivacyInspector {
           '[aria-label*="cookie" i]',
           '[id*="consent"]'
         ];
-        return selectors.some((sel) => !!document.querySelector(sel));
-      })
+        for (var j = 0; j < selectors.length; j++) {
+          try {
+            if (document.querySelector(selectors[j])) return true;
+          } catch (e) {}
+        }
+        return false;
+      })()`)
+      .then((v) => Boolean(v))
       .catch(() => false);
   }
 
   private async findPolicyLinks(): Promise<{ hasPrivacy: boolean; hasCookies: boolean }> {
     return this.page
-      .evaluate(() => {
-        const anchors = Array.from(document.querySelectorAll('a[href]'));
-        const blob = anchors
-          .map((a) => `${(a.getAttribute('href') || '').toLowerCase()} ${(a.textContent || '').toLowerCase()}`)
-          .join('\n');
-
-        const hasPrivacy =
-          /privacy|privacidad|politica-de-privacidad|política de privacidad|datenschutz/.test(
-            blob
+      .evaluate(`(() => {
+        var anchors = Array.from(document.querySelectorAll('a[href]'));
+        var parts = [];
+        for (var i = 0; i < anchors.length; i++) {
+          var a = anchors[i];
+          parts.push(
+            ((a.getAttribute('href') || '') + ' ' + (a.textContent || '')).toLowerCase()
           );
-        const hasCookies =
-          /cookie-policy|cookies-policy|politica-de-cookies|política de cookies|cookie notice|aviso de cookies/.test(
-            blob
-          );
-
-        return { hasPrivacy, hasCookies };
-      })
+        }
+        var blob = parts.join('\\n');
+        var hasPrivacy = /privacy|privacidad|politica-de-privacidad|política de privacidad|datenschutz/.test(blob);
+        var hasCookies = /cookie-policy|cookies-policy|politica-de-cookies|política de cookies|cookie notice|aviso de cookies/.test(blob);
+        return { hasPrivacy: hasPrivacy, hasCookies: hasCookies };
+      })()`)
+      .then((v) => v as { hasPrivacy: boolean; hasCookies: boolean })
       .catch(() => ({ hasPrivacy: false, hasCookies: false }));
   }
 }

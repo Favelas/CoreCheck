@@ -120,9 +120,9 @@ export class AuthHandler {
     await page.waitForTimeout(800);
 
     const cookies = await page.context().cookies();
-    const localKeys = await page
-      .evaluate(() => Object.keys(window.localStorage || {}))
-      .catch(() => [] as string[]);
+    const localKeys = (await page
+      .evaluate(`(() => Object.keys(window.localStorage || {}))()`)
+      .catch(() => [] as string[])) as string[];
 
     if (cookies.length === 0 && localKeys.length === 0) {
       console.warn(
