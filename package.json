@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "audit": "tsx src/cli/index.ts",
-    "audit:sample": "tsx src/cli/index.ts --url https://example.com --fail-on HIGH --formats json,html,sarif,markdown --output-dir ./audit-results",
+    "audit:sample": "tsx src/cli/index.ts --url https://example.com --fail-on HIGH --formats json,html,sarif,markdown --output-dir ./audit-results --api-key cc_dev_enterprise_governance",
+    "control-plane": "tsx src/server/index.ts",
     "postinstall": "playwright install chromium"
   },
   "devDependencies": {

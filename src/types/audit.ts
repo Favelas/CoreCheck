@@ -143,6 +143,8 @@ export interface AuditExecutionOptions {
   environment?: AuditEnvironment;
   /** Ruta a baseline JSON o .corecheckignore. */
   baselinePath?: string;
+  /** API Key comercial (también vía CORECHECK_API_KEY). */
+  apiKey?: string;
 }
 
 /** Resultado consolidado de una corrida multi-página. */

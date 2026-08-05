@@ -12,6 +12,7 @@ import {
   buildTicketPayloads,
   notifyWebhook
 } from '../integrations/index.js';
+import { LicenseValidator, UsageTelemetry } from '../licensing/index.js';
 import { generateHtmlReport } from '../reporters/htmlReporter.js';
 import { generateMarkdownReport } from '../reporters/markdownReporter.js';
 import { generatePdfReport } from '../reporters/pdf_reporter.js';
@@ -23,6 +24,7 @@ import {
   SeverityLevel,
   TicketProvider
 } from '../types/audit.js';
+import { LicenseModule } from '../types/license.js';
 import { exportToSarif } from '../utils/sarif_exporter.js';
 
 const program = new Command();
@@ -189,11 +191,21 @@ program
     '--tickets <provider>',
     'Exportar payloads de ticketing: jira | azure_boards | gitlab'
   )
-  .option('--ticket-project <key>', 'Project key / area / GitLab project id para tickets');
+  .option('--ticket-project <key>', 'Project key / area / GitLab project id para tickets')
+  .option(
+    '--api-key <key>',
+    'API Key comercial CoreCheck (alternativa: env CORECHECK_API_KEY)'
+  )
+  .option(
+    '--skip-license',
+    'Omitir validación de licencia (solo desarrollo local; no usar en CI prod)',
+    false
+  );
 
 program.parse(process.argv);
 
 void (async () => {
+  const startedAt = Date.now();
   try {
     const opts = program.opts();
     const targetUrl = assertValidUrl(opts.url);
@@ -205,7 +217,7 @@ void (async () => {
     const cliFailOn = parseFailOn(opts.failOn);
     const environment = parseEnvironment(opts.environment as string);
     const maxDepth = parsePositiveInt(opts.maxDepth, '--max-depth');
-    const maxPages = parsePositiveInt(opts.maxPages, '--max-pages');
+    let maxPages = parsePositiveInt(opts.maxPages, '--max-pages');
     if (maxPages < 1) {
       throw new Error('--max-pages debe ser >= 1.');
     }
@@ -221,6 +233,88 @@ void (async () => {
       throw new Error(
         `--tickets inválido: "${opts.tickets}". Válidos: jira, azure_boards, gitlab.`
       );
+    }
+
+    const wantsPdf = outputFormats.includes('pdf') || Boolean(opts.pdf) || Boolean(opts.outputPdf);
+    const requestedModules: LicenseModule[] = ['compliance_mapping'];
+    if (wantsPdf) requestedModules.push('pdf_report');
+    if (ticketProvider) requestedModules.push('ticketing');
+    if (opts.fuzzing) requestedModules.push('active_fuzzing');
+    if (webhookUrl) requestedModules.push('webhooks');
+
+    // ——— Fase 4: License gate ———
+    const apiKey = LicenseValidator.resolveApiKey(opts.apiKey as string | undefined);
+    const skipLicense = Boolean(opts.skipLicense);
+    let licenseInfo = undefined as
+      | import('../types/license.js').LicenseInfo
+      | undefined;
+
+    if (!skipLicense) {
+      if (!apiKey) {
+        throw new Error(
+          'API Key requerida. Use --api-key <key> o la variable de entorno CORECHECK_API_KEY. ' +
+            'Para desarrollo local: --api-key cc_dev_growth o --skip-license.'
+        );
+      }
+
+      const validator = new LicenseValidator();
+      const licenseResult = await validator.validate({
+        apiKey,
+        targetUrl,
+        requestedPages: maxPages,
+        requestedModules
+      });
+
+      if (!licenseResult.ok) {
+        // Si el plan limita páginas, auto-cap en lugar de abortar cuando solo es PAGE_LIMIT.
+        if (
+          licenseResult.code === 'PAGE_LIMIT_EXCEEDED' &&
+          licenseResult.effectiveMaxPages &&
+          licenseResult.license
+        ) {
+          console.warn(
+            `[License] Cap de páginas aplicado: ${maxPages} → ${licenseResult.effectiveMaxPages} (${licenseResult.license.tier})`
+          );
+          maxPages = licenseResult.effectiveMaxPages;
+          licenseInfo = licenseResult.license;
+        } else {
+          console.error(`[License] ${licenseResult.code}: ${licenseResult.message}`);
+          process.exit(2);
+        }
+      } else {
+        licenseInfo = licenseResult.license;
+        if (
+          licenseResult.effectiveMaxPages &&
+          maxPages > licenseResult.effectiveMaxPages
+        ) {
+          maxPages = licenseResult.effectiveMaxPages;
+        }
+        console.log(
+          `[License] OK · tier=${licenseInfo?.tier} · org=${licenseInfo?.organization}` +
+            (licenseResult.offlineFallback ? ' · offline-cache' : '')
+        );
+      }
+
+      // Enforce module gates even after OK (defense in depth).
+      if (licenseInfo) {
+        if (wantsPdf && !licenseInfo.entitlements.allowedModules.includes('pdf_report')) {
+          console.error(
+            `[License] MODULE_NOT_ALLOWED: reporte PDF requiere Enterprise Core o superior (plan actual: ${licenseInfo.tier}).`
+          );
+          process.exit(2);
+        }
+        if (
+          ticketProvider &&
+          !licenseInfo.entitlements.allowedModules.includes('ticketing')
+        ) {
+          console.error(
+            `[License] MODULE_NOT_ALLOWED: ticketing requiere Enterprise Governance (plan actual: ${licenseInfo.tier}).`
+          );
+          process.exit(2);
+        }
+      }
+    } else {
+      console.warn('[License] --skip-license activo: validación comercial omitida.');
     }
 
     const baseOutputDir = path.resolve(opts.outputDir);
@@ -262,6 +356,7 @@ void (async () => {
       sameOriginOnly: true,
       environment,
       baselinePath: opts.baseline as string | undefined,
+      apiKey,
       ...(authLoginUrl
         ? {
             authConfig: {
@@ -325,6 +420,14 @@ void (async () => {
             target: bundle.target,
             timestamp: bundle.timestamp,
             environment: bundle.environment,
+            license: licenseInfo
+              ? {
+                  tier: licenseInfo.tier,
+                  accountId: licenseInfo.accountId,
+                  organization: licenseInfo.organization,
+                  status: licenseInfo.status
+                }
+              : null,
             scannedPages: bundle.scannedPages,
             digitalQualityScore: bundle.digitalQualityScore,
             maxCvssScore: bundle.maxCvssScore,
@@ -362,7 +465,7 @@ void (async () => {
       console.log(`Reporte Markdown: ${mdPath}`);
     }
 
-    if (outputFormats.includes('pdf') || opts.pdf || opts.outputPdf) {
+    if (wantsPdf) {
       const pdfPath = opts.outputPdf
         ? path.resolve(opts.outputPdf as string)
         : path.join(outputDir, 'executive-report.pdf');
@@ -393,6 +496,17 @@ void (async () => {
           `Webhook (${result.channel}): fallo — ${result.error ?? result.status ?? 'unknown'}`
         );
       }
+    }
+
+    // ——— Fase 4: Telemetry (non-blocking) ———
+    if (licenseInfo) {
+      new UsageTelemetry().reportAsync({
+        license: licenseInfo,
+        targetUrl,
+        pagesScanned: scannedPages.length,
+        durationMs: Date.now() - startedAt,
+        bundle
+      });
     }
 
     console.log(`\nAuditoría finalizada. Total de hallazgos: ${bundle.findings.length}`);
