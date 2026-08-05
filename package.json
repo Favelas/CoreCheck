@@ -16,12 +16,14 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
+    "@types/pdfkit": "^0.17.6",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
   },
   "dependencies": {
     "@axe-core/playwright": "^4.12.1",
     "commander": "^15.0.0",
+    "pdfkit": "^0.19.1",
     "playwright": "^1.42.0"
   }
 }

@@ -25,8 +25,12 @@ import { ZeroFPEngine } from './zero_fp_engine.js';
 
 type BrowserContextOptions = Parameters<Browser['newContext']>[0];
 
-type RunnerOptions = Required<Omit<AuditExecutionOptions, 'authConfig'>> & {
+type RunnerOptions = Required<
+  Omit<AuditExecutionOptions, 'authConfig' | 'environment' | 'baselinePath'>
+> & {
   authConfig?: AuditAuthConfig;
+  environment?: AuditExecutionOptions['environment'];
+  baselinePath?: string;
 };
 
 export class AuditRunner {
@@ -47,7 +51,9 @@ export class AuditRunner {
       maxDepth: options.maxDepth ?? 2,
       maxPages: options.maxPages ?? 10,
       sameOriginOnly: options.sameOriginOnly ?? true,
-      authConfig: options.authConfig
+      authConfig: options.authConfig,
+      environment: options.environment,
+      baselinePath: options.baselinePath
     };
   }
 
