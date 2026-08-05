@@ -5,20 +5,29 @@ import { ConsoleDataInspector } from '../inspectors/console_data_inspector.js';
 import { FormActiveInspector } from '../inspectors/form_active_inspector.js';
 import { FuzzingInspector } from '../inspectors/fuzzing_inspector.js';
 import { HeadersConfigInspector } from '../inspectors/headers_config_inspector.js';
+import { A11yRealInspector } from '../inspectors/a11y_real_inspector.js';
+import { NetworkPassiveInspector } from '../inspectors/network_passive_inspector.js';
 import { VisualMetaInspector } from '../inspectors/visual_meta_inspector.js';
 import {
+  AuditAuthConfig,
   AuditExecutionOptions,
   AuditFinding,
   AuditRunResult,
   FindingLocation,
   OutputFormat
 } from '../types/audit.js';
+import { AuthHandler } from './auth_handler.js';
 import { SiteCrawler } from './crawler.js';
+import { ZeroFPEngine } from './zero_fp_engine.js';
 
 type BrowserContextOptions = Parameters<Browser['newContext']>[0];
 
+type RunnerOptions = Required<Omit<AuditExecutionOptions, 'authConfig'>> & {
+  authConfig?: AuditAuthConfig;
+};
+
 export class AuditRunner {
-  private options: Required<AuditExecutionOptions>;
+  private options: RunnerOptions;
 
   constructor(options: AuditExecutionOptions) {
     const defaultFormats: OutputFormat[] = ['json', 'sarif'];
@@ -34,7 +43,8 @@ export class AuditRunner {
       outputDir: options.outputDir ?? '',
       maxDepth: options.maxDepth ?? 2,
       maxPages: options.maxPages ?? 10,
-      sameOriginOnly: options.sameOriginOnly ?? true
+      sameOriginOnly: options.sameOriginOnly ?? true,
+      authConfig: options.authConfig
     };
   }
 
@@ -70,6 +80,25 @@ export class AuditRunner {
       const crawlContext = await browser.newContext(contextOptions);
       crawlContext.setDefaultTimeout(this.options.timeoutMs);
       contextsToClose.push(crawlContext);
+
+      if (this.options.authConfig) {
+        const authHandler = new AuthHandler();
+        const authResult = await authHandler.authenticate(
+          crawlContext,
+          this.options.authConfig,
+          this.options.timeoutMs
+        );
+
+        if (authResult.extraHTTPHeaders) {
+          contextOptions.extraHTTPHeaders = {
+            ...(contextOptions.extraHTTPHeaders ?? {}),
+            ...authResult.extraHTTPHeaders
+          };
+        }
+        if (authResult.storageState) {
+          contextOptions.storageState = authResult.storageState;
+        }
+      }
 
       const crawlPage = await crawlContext.newPage();
       const crawler = new SiteCrawler(crawlPage);
@@ -109,8 +138,17 @@ export class AuditRunner {
         allFindings.push(...this.stampPageUrl(pageFindings, pageUrl));
       }
 
+      const deduped = this.deduplicateFindings(allFindings);
+
+      const revalContext = await browser.newContext(contextOptions);
+      revalContext.setDefaultTimeout(this.options.timeoutMs);
+      contextsToClose.push(revalContext);
+      const revalPage = await revalContext.newPage();
+      const zeroFp = new ZeroFPEngine(revalPage, this.options.timeoutMs);
+      const findings = await zeroFp.revalidate(deduped);
+
       return {
-        findings: this.deduplicateFindings(allFindings),
+        findings,
         scannedPages
       };
     } finally {
@@ -139,6 +177,8 @@ export class AuditRunner {
     const page = await pageContext.newPage();
     const consoleInspector = new ConsoleDataInspector(page);
     const visualMetaInspector = new VisualMetaInspector(page);
+    const networkInspector = new NetworkPassiveInspector(page);
+    networkInspector.attach(pageUrl);
 
     let navigationSuccess = false;
     let attempt = 0;
@@ -221,6 +261,8 @@ export class AuditRunner {
     const inspectorTasks: Promise<AuditFinding[]>[] = [];
 
     inspectorTasks.push(consoleInspector.inspectStorage());
+    inspectorTasks.push(new A11yRealInspector(page).inspect());
+    inspectorTasks.push(networkInspector.collect());
     inspectorTasks.push(
       visualMetaInspector.inspectMetadata().then((issues) =>
         issues.map(

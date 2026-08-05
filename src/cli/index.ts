@@ -132,7 +132,10 @@ program
   .option('-t, --timeout <number>', 'Timeout global en ms por página', '30000')
   .option('--max-depth <number>', 'Profundidad máxima del crawler BFS', '2')
   .option('--max-pages <number>', 'Máximo de páginas a descubrir/auditar', '10')
-  .option('--fuzzing', 'Habilitar fuzzing activo', false);
+  .option('--fuzzing', 'Habilitar fuzzing activo', false)
+  .option('--auth-login-url <url>', 'URL del formulario de login (auth avanzada)')
+  .option('--auth-user <username>', 'Usuario para form-login')
+  .option('--auth-pass <password>', 'Password para form-login');
 
 program.parse(process.argv);
 
@@ -162,6 +165,15 @@ void (async () => {
 
     fs.mkdirSync(outputDir, { recursive: true });
 
+    const authLoginUrl = opts.authLoginUrl
+      ? assertValidUrl(opts.authLoginUrl)
+      : undefined;
+    if ((opts.authUser || opts.authPass) && !authLoginUrl) {
+      throw new Error(
+        'Si usa --auth-user/--auth-pass debe indicar también --auth-login-url.'
+      );
+    }
+
     const auditOptions: AuditExecutionOptions = {
       targetUrl,
       storageStatePath: opts.authState,
@@ -172,7 +184,16 @@ void (async () => {
       activeFuzzing: Boolean(opts.fuzzing),
       maxDepth,
       maxPages,
-      sameOriginOnly: true
+      sameOriginOnly: true,
+      ...(authLoginUrl
+        ? {
+            authConfig: {
+              loginUrl: authLoginUrl,
+              username: opts.authUser as string | undefined,
+              password: opts.authPass as string | undefined
+            }
+          }
+        : {})
     };
 
     const runner = new AuditRunner(auditOptions);
