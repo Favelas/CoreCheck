@@ -1,8 +1,15 @@
 export type SeverityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 export type OutputFormat = 'json' | 'sarif' | 'html' | 'markdown';
 
-/** Categoría funcional del hallazgo (Security / A11y / Network). */
-export type RuleCategory = 'SECURITY' | 'A11Y' | 'NETWORK' | 'QUALITY';
+/** Categoría funcional del hallazgo (Security / A11y / Network / Digital Quality). */
+export type RuleCategory =
+  | 'SECURITY'
+  | 'A11Y'
+  | 'NETWORK'
+  | 'QUALITY'
+  | 'PERFORMANCE'
+  | 'SEO'
+  | 'PRIVACY';
 
 /** Tipo tipado de regla; WCAG real usa A11Y_VIOLATION. */
 export type RuleType =
@@ -10,7 +17,15 @@ export type RuleType =
   | 'NETWORK_HTTP_ERROR'
   | 'NETWORK_MIXED_CONTENT'
   | 'NETWORK_COOKIE_FLAGS'
-  | 'SECURITY_FINDING';
+  | 'SECURITY_FINDING'
+  | 'PERF_WEB_VITAL'
+  | 'PERF_ASSET_OPTIMIZATION'
+  | 'SEO_META_TAG'
+  | 'SEO_STRUCTURE'
+  | 'SEO_GEO'
+  | 'PRIVACY_COOKIE'
+  | 'PRIVACY_CONSENT'
+  | 'PRIVACY_POLICY_LINK';
 
 export interface FindingLocation {
   selector?: string;

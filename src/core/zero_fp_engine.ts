@@ -1,8 +1,8 @@
 import { Page, Response } from 'playwright';
 
-import { AuditFinding, SeverityLevel } from '../types/audit.js';
+import { AuditFinding, RuleCategory, SeverityLevel } from '../types/audit.js';
 
-const REVALIDATE_SEVERITIES = new Set<SeverityLevel>(['CRITICAL', 'HIGH']);
+const REVALIDATE_SEVERITIES = new Set<SeverityLevel>(['CRITICAL', 'HIGH', 'MEDIUM']);
 
 const ACTIVE_SECURITY_RULES = new Set<string>([
   'SEC-XSS-ACTIVE-INJECTION',
@@ -10,9 +10,51 @@ const ACTIVE_SECURITY_RULES = new Set<string>([
   'SEC-UNHANDLED-EXCEPTION'
 ]);
 
+const DQ_CATEGORIES = new Set<RuleCategory>(['PERFORMANCE', 'SEO', 'PRIVACY']);
+
+/**
+ * Evidencia determinística (medición browser/DOM/cookie jar): confidence HIGH
+ * sin re-inyección activa. El Quality Gate las trata como confirmadas.
+ */
+const DETERMINISTIC_DQ_RULES = new Set<string>([
+  // Performance — métricas/observables directos
+  'PERF-LCP-SLOW',
+  'PERF-CLS-HIGH',
+  'PERF-DCL-SLOW',
+  'PERF-LOAD-SLOW',
+  'PERF-IMAGE-OVERSIZED',
+  'PERF-COMPRESSION-MISSING',
+  'PERF-ASSET-LARGE',
+  // SEO — presencia/ausencia en DOM o robots.txt
+  'SEO-TITLE-MISSING',
+  'SEO-TITLE-TOO-LONG',
+  'SEO-META-DESCRIPTION-MISSING',
+  'SEO-H1-MISSING',
+  'SEO-H1-MULTIPLE',
+  'SEO-H2-MISSING',
+  'SEO-CANONICAL-MISSING',
+  'SEO-ROBOTS-NOINDEX',
+  'SEO-ROBOTS-NOFOLLOW',
+  'SEO-ROBOTS-TXT-MISSING',
+  'SEO-ROBOTS-TXT-INVALID',
+  'SEO-JSONLD-MISSING',
+  'SEO-OPEN-GRAPH-INCOMPLETE',
+  'SEO-GEO-LANG-MISSING',
+  'SEO-GEO-MAIN-LANDMARK-MISSING',
+  'SEO-GEO-HEADING-OUTLINE',
+  'SEO-GEO-THIN-CONTENT',
+  // Privacy — cookie jar / DOM links
+  'PRIV-THIRD-PARTY-COOKIE-PRECONSENT',
+  'PRIV-COOKIE-BEFORE-CONSENT-UI',
+  'PRIV-POLICY-LINK-MISSING',
+  'PRIV-COOKIE-POLICY-LINK-MISSING',
+  'PRIV-INSECURE-COOKIE'
+]);
+
 /**
  * Motor Zero-FP: segunda pasada pasiva/activa sobre hallazgos críticos
  * para subir confidence a HIGH o descartar falsos positivos.
+ * Incluye taxonomía Digital Quality (PERFORMANCE / SEO / PRIVACY).
  */
 export class ZeroFPEngine {
   constructor(
@@ -27,6 +69,13 @@ export class ZeroFPEngine {
     let skipped = 0;
 
     for (const finding of findings) {
+      // Digital Quality con evidencia determinística → HIGH directo (gate-ready).
+      if (this.isDeterministicDigitalQuality(finding)) {
+        kept.push({ ...finding, confidence: 'HIGH', revalidated: true });
+        confirmed++;
+        continue;
+      }
+
       if (!this.needsRevalidation(finding)) {
         kept.push({
           ...finding,
@@ -49,7 +98,6 @@ export class ZeroFPEngine {
           kept.push({ ...finding, confidence: 'HIGH', revalidated: true });
           confirmed++;
         } else if (ACTIVE_SECURITY_RULES.has(finding.ruleId)) {
-          // Activos no confirmados → descartar (presupuesto Zero-FP).
           discarded++;
           console.log(
             `[ZeroFP] Descartado FP: ${finding.ruleId} @ ${pageUrl} (${finding.evidence.selector ?? 'n/a'})`
@@ -73,17 +121,40 @@ export class ZeroFPEngine {
     return kept;
   }
 
-  private needsRevalidation(finding: AuditFinding): boolean {
-    if (!REVALIDATE_SEVERITIES.has(finding.severity)) {
+  private isDeterministicDigitalQuality(finding: AuditFinding): boolean {
+    if (DETERMINISTIC_DQ_RULES.has(finding.ruleId)) {
+      return true;
+    }
+    if (!finding.category || !DQ_CATEGORIES.has(finding.category)) {
       return false;
     }
+    // Prefijos DQ conocidos con evidencia ya materializada en el hallazgo.
+    return (
+      finding.ruleId.startsWith('PERF-') ||
+      finding.ruleId.startsWith('SEO-') ||
+      finding.ruleId.startsWith('PRIV-')
+    );
+  }
+
+  private needsRevalidation(finding: AuditFinding): boolean {
     if (ACTIVE_SECURITY_RULES.has(finding.ruleId)) {
       return true;
     }
-    if (finding.ruleId.startsWith('SEC-')) {
-      return true;
+
+    const isSecurity =
+      finding.ruleId.startsWith('SEC-') ||
+      finding.category === 'SECURITY' ||
+      finding.ruleType === 'SECURITY_FINDING';
+
+    if (isSecurity) {
+      return finding.severity === 'CRITICAL' || finding.severity === 'HIGH';
     }
-    return finding.category === 'SECURITY' || finding.ruleType === 'SECURITY_FINDING';
+
+    if (finding.category && DQ_CATEGORIES.has(finding.category)) {
+      return REVALIDATE_SEVERITIES.has(finding.severity);
+    }
+
+    return false;
   }
 
   private async confirmFinding(finding: AuditFinding, pageUrl: string): Promise<boolean> {
@@ -103,8 +174,32 @@ export class ZeroFPEngine {
       case 'SEC-HDR-NOSNIFF-MISSING':
         return this.confirmMissingHeader(pageUrl, 'x-content-type-options', 'nosniff');
       default:
+        if (finding.category && DQ_CATEGORIES.has(finding.category)) {
+          return this.confirmDigitalQuality(finding, pageUrl);
+        }
         return this.confirmPassiveDomOrNetwork(finding, pageUrl);
     }
+  }
+
+  /** Re-check ligero DOM/cookie para hallazgos DQ no listados como determinísticos. */
+  private async confirmDigitalQuality(
+    finding: AuditFinding,
+    pageUrl: string
+  ): Promise<boolean> {
+    await this.navigate(pageUrl);
+
+    if (finding.ruleId.startsWith('PRIV-') && finding.ruleId.includes('COOKIE')) {
+      const cookies = await this.page.context().cookies().catch(() => []);
+      if (finding.evidence.snippet) {
+        const nameHint = finding.evidence.snippet.split(/[;@,\s]/)[0];
+        if (nameHint && cookies.some((c) => c.name === nameHint || finding.evidence.snippet!.includes(c.name))) {
+          return true;
+        }
+      }
+      return cookies.length > 0;
+    }
+
+    return this.confirmPassiveDomOrNetwork(finding, pageUrl);
   }
 
   private async navigate(pageUrl: string): Promise<Response | null> {

@@ -7,6 +7,9 @@ import { FuzzingInspector } from '../inspectors/fuzzing_inspector.js';
 import { HeadersConfigInspector } from '../inspectors/headers_config_inspector.js';
 import { A11yRealInspector } from '../inspectors/a11y_real_inspector.js';
 import { NetworkPassiveInspector } from '../inspectors/network_passive_inspector.js';
+import { PerformanceInspector } from '../inspectors/performance_inspector.js';
+import { PrivacyInspector } from '../inspectors/privacy_inspector.js';
+import { SeoGeoInspector } from '../inspectors/seo_geo_inspector.js';
 import { VisualMetaInspector } from '../inspectors/visual_meta_inspector.js';
 import {
   AuditAuthConfig,
@@ -178,7 +181,11 @@ export class AuditRunner {
     const consoleInspector = new ConsoleDataInspector(page);
     const visualMetaInspector = new VisualMetaInspector(page);
     const networkInspector = new NetworkPassiveInspector(page);
+    const performanceInspector = new PerformanceInspector(page);
+    const privacyInspector = new PrivacyInspector(page);
     networkInspector.attach(pageUrl);
+    performanceInspector.attach();
+    privacyInspector.attach(pageUrl);
 
     let navigationSuccess = false;
     let attempt = 0;
@@ -263,6 +270,9 @@ export class AuditRunner {
     inspectorTasks.push(consoleInspector.inspectStorage());
     inspectorTasks.push(new A11yRealInspector(page).inspect());
     inspectorTasks.push(networkInspector.collect());
+    inspectorTasks.push(performanceInspector.inspect(pageUrl));
+    inspectorTasks.push(new SeoGeoInspector(page).inspect(pageUrl));
+    inspectorTasks.push(privacyInspector.inspect(pageUrl));
     inspectorTasks.push(
       visualMetaInspector.inspectMetadata().then((issues) =>
         issues.map(
