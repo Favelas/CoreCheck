@@ -1,0 +1,57 @@
+name: CoreCheck CI & Quality Gate
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    name: Typecheck, Build & Assessment Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Project Dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium Browser
+        run: npx playwright install --with-deps chromium
+
+      - name: TypeScript Typecheck (0 Errors Policy)
+        run: npm run typecheck
+
+      - name: Build CoreCheck CLI
+        run: npm run build
+
+      - name: Run Test Suite
+        run: npm test
+        continue-on-error: false
+
+      - name: Smoke Test - Run CoreCheck CLI Assessment
+        run: |
+          node dist/index.js run \
+            --url https://example.com \
+            --html --pdf --sarif --json \
+            --out reports/ci-smoke-report.html \
+            --fail-on CRITICAL
+
+      - name: Upload Audit Reports Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corecheck-ci-artifacts
+          path: |
+            reports/ci-smoke-report.html
+            reports/*.pdf
+            reports/*.json
+            reports/*.sarif

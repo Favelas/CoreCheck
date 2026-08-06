@@ -13,6 +13,7 @@
     "start": "node dist/index.js",
     "audit": "tsx src/cli/index.ts",
     "audit:sample": "tsx src/cli/index.ts --url https://example.com --fail-on HIGH --formats json,html,sarif,markdown --output-dir ./audit-results --api-key cc_dev_enterprise_governance",
+    "reports:prepare": "tsx scripts/prepare_shared_reports.ts",
     "control-plane": "tsx src/server/index.ts",
     "postinstall": "playwright install chromium"
   },
