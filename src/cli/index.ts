@@ -28,11 +28,19 @@ import {
 } from '../types/audit.js';
 import { LicenseModule } from '../types/license.js';
 import { exportToSarif } from '../utils/sarif_exporter.js';
+import { getPackageVersion } from '../utils/package_version.js';
 import {
   DEFAULT_FORMATS_CSV,
   resolveArtifactLayout,
   resolveOutputFormats
 } from './cli_contract.js';
+import {
+  classifyError,
+  CoreCheckError,
+  ExitCode,
+  exitCodeLabel
+} from './exit_codes.js';
+import { registerVerifyCommand } from './verify_command.js';
 
 const VALID_SEVERITIES = new Set<SeverityLevel>([
   'CRITICAL',
@@ -49,8 +57,9 @@ const VALID_CVSS = new Set<CvssVersion>(['3.1', '4.0']);
 function parseFailOn(raw: string): SeverityLevel {
   const severity = raw.trim().toUpperCase() as SeverityLevel;
   if (!VALID_SEVERITIES.has(severity)) {
-    throw new Error(
-      `Severidad inválida en --fail-on: "${raw}". Válidas: ${[...VALID_SEVERITIES].join(', ')}.`
+    throw new CoreCheckError(
+      `Severidad inválida en --fail-on: "${raw}". Válidas: ${[...VALID_SEVERITIES].join(', ')}.`,
+      'CONFIG'
     );
   }
   return severity;
@@ -59,8 +68,9 @@ function parseFailOn(raw: string): SeverityLevel {
 function parseEnvironment(raw: string): AuditEnvironment {
   const env = raw.trim().toLowerCase() as AuditEnvironment;
   if (!VALID_ENVS.has(env)) {
-    throw new Error(
-      `Entorno inválido en --environment: "${raw}". Válidos: prod, staging, dev.`
+    throw new CoreCheckError(
+      `Entorno inválido en --environment: "${raw}". Válidos: prod, staging, dev.`,
+      'CONFIG'
     );
   }
   return env;
@@ -69,8 +79,9 @@ function parseEnvironment(raw: string): AuditEnvironment {
 function parseCvssVersion(raw: string): CvssVersion {
   const version = raw.trim() as CvssVersion;
   if (!VALID_CVSS.has(version)) {
-    throw new Error(
-      `Versión CVSS inválida en --cvss-version: "${raw}". Válidas: 3.1, 4.0.`
+    throw new CoreCheckError(
+      `Versión CVSS inválida en --cvss-version: "${raw}". Válidas: 3.1, 4.0.`,
+      'CONFIG'
     );
   }
   return version;
@@ -86,15 +97,17 @@ function parseAuthHeaders(rawHeaders: string[] | undefined): Record<string, stri
   for (const raw of rawHeaders) {
     const sep = raw.indexOf(':');
     if (sep <= 0) {
-      throw new Error(
-        `Header inválido en --auth-header: "${raw}". Use el formato "Name: Value".`
+      throw new CoreCheckError(
+        `Header inválido en --auth-header: "${raw}". Use el formato "Name: Value".`,
+        'CONFIG'
       );
     }
     const name = raw.slice(0, sep).trim();
     const value = raw.slice(sep + 1).trim();
     if (!name || !value) {
-      throw new Error(
-        `Header inválido en --auth-header: "${raw}". Name y Value son requeridos.`
+      throw new CoreCheckError(
+        `Header inválido en --auth-header: "${raw}". Name y Value son requeridos.`,
+        'CONFIG'
       );
     }
     headers[name] = value;
@@ -111,7 +124,10 @@ function assertValidUrl(raw: string): string {
     }
     return url.toString();
   } catch {
-    throw new Error(`URL inválida en --url: "${raw}". Debe ser una URL http(s) absoluta.`);
+    throw new CoreCheckError(
+      `URL inválida en --url: "${raw}". Debe ser una URL http(s) absoluta.`,
+      'CONFIG'
+    );
   }
 }
 
@@ -123,8 +139,9 @@ function assertWebhookUrl(raw: string): string {
     }
     return url.toString();
   } catch {
-    throw new Error(
-      `URL inválida en --webhook-url: "${raw}". Debe ser una URL http(s) absoluta.`
+    throw new CoreCheckError(
+      `URL inválida en --webhook-url: "${raw}". Debe ser una URL http(s) absoluta.`,
+      'CONFIG'
     );
   }
 }
@@ -132,7 +149,7 @@ function assertWebhookUrl(raw: string): string {
 function parsePositiveInt(raw: string, flagName: string): number {
   const value = parseInt(raw, 10);
   if (Number.isNaN(value) || value < 0) {
-    throw new Error(`${flagName} debe ser un entero >= 0.`);
+    throw new CoreCheckError(`${flagName} debe ser un entero >= 0.`, 'CONFIG');
   }
   return value;
 }
@@ -243,7 +260,9 @@ const program = new Command()
   .description(
     'CoreCheck v1.0 — Unified Digital Quality & Security Gate (DAST, A11y, Perf, Privacy, SEO/GEO, AI readiness)'
   )
-  .version('1.0.0');
+  .version(getPackageVersion());
+
+registerVerifyCommand(program);
 
 const runCommand = registerRunOptions(
   program
@@ -275,7 +294,7 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
     const maxDepth = parsePositiveInt(String(opts.maxDepth), '--max-depth');
     let maxPages = parsePositiveInt(String(opts.maxPages), '--max-pages');
     if (maxPages < 1) {
-      throw new Error('--max-pages debe ser >= 1.');
+      throw new CoreCheckError('--max-pages debe ser >= 1.', 'CONFIG');
     }
 
     const webhookUrl = opts.webhookUrl
@@ -286,8 +305,9 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
       ? (String(opts.tickets).toLowerCase() as TicketProvider)
       : undefined;
     if (ticketProvider && !VALID_TICKETS.has(ticketProvider)) {
-      throw new Error(
-        `--tickets inválido: "${opts.tickets}". Válidos: jira, azure_boards, gitlab.`
+      throw new CoreCheckError(
+        `--tickets inválido: "${opts.tickets}". Válidos: jira, azure_boards, gitlab.`,
+        'CONFIG'
       );
     }
 
@@ -308,9 +328,10 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
 
     if (!skipLicense) {
       if (!apiKey) {
-        throw new Error(
+        throw new CoreCheckError(
           'API Key requerida. Use --api-key <key> o la variable de entorno CORECHECK_API_KEY. ' +
-            'Para desarrollo local: --api-key cc_dev_growth o --skip-license.'
+            'Para desarrollo local: --api-key cc_dev_growth o --skip-license.',
+          'LICENSE'
         );
       }
 
@@ -336,7 +357,7 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
           licenseInfo = licenseResult.license;
         } else {
           console.error(`[License] ${licenseResult.code}: ${licenseResult.message}`);
-          process.exit(2);
+          process.exit(ExitCode.CONFIG);
         }
       } else {
         licenseInfo = licenseResult.license;
@@ -358,7 +379,7 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
           console.error(
             `[License] MODULE_NOT_ALLOWED: reporte PDF requiere Enterprise Core o superior (plan actual: ${licenseInfo.tier}).`
           );
-          process.exit(2);
+          process.exit(ExitCode.CONFIG);
         }
         if (
           ticketProvider &&
@@ -367,7 +388,7 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
           console.error(
             `[License] MODULE_NOT_ALLOWED: ticketing requiere Enterprise Governance (plan actual: ${licenseInfo.tier}).`
           );
-          process.exit(2);
+          process.exit(ExitCode.CONFIG);
         }
       }
     } else {
@@ -404,24 +425,33 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
       ? assertValidUrl(opts.authLoginUrl as string)
       : undefined;
     if ((opts.authUser || opts.authPass) && !authLoginUrl) {
-      throw new Error(
-        'Si usa --auth-user/--auth-pass debe indicar también --auth-login-url.'
+      throw new CoreCheckError(
+        'Si usa --auth-user/--auth-pass debe indicar también --auth-login-url.',
+        'CONFIG'
       );
     }
 
     const customHeaders = parseAuthHeaders(opts.authHeader as string[] | undefined);
     const hasCustomHeaders = Object.keys(customHeaders).length > 0;
     const cvssVersion = parseCvssVersion(String(opts.cvssVersion ?? '3.1'));
-    const concurrency = parsePositiveInt(String(opts.concurrency), '--concurrency');
-    if (concurrency < 1) {
-      throw new Error('--concurrency debe ser >= 1.');
+    const concurrencyRaw = parsePositiveInt(String(opts.concurrency), '--concurrency');
+    if (concurrencyRaw < 1) {
+      throw new CoreCheckError('--concurrency debe ser >= 1.', 'CONFIG');
     }
+
+    const timeoutMs = parsePositiveInt(String(opts.timeout), '--timeout');
+    if (timeoutMs < 1) {
+      throw new CoreCheckError('--timeout debe ser >= 1.', 'CONFIG');
+    }
+
+    // El AuditRunner aplica ResourceBudget (cap CI/memoria); aquí solo validamos el pedido.
+    const concurrency = concurrencyRaw;
 
     const auditOptions: AuditExecutionOptions = {
       targetUrl,
       storageStatePath: opts.authState as string | undefined,
       concurrency,
-      timeoutMs: parseInt(String(opts.timeout), 10),
+      timeoutMs,
       outputFormats,
       outputDir,
       activeFuzzing: Boolean(opts.fuzzing),
@@ -532,6 +562,7 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
             target: bundle.target,
             timestamp: bundle.timestamp,
             environment: bundle.environment,
+            activeFuzzing: Boolean(opts.fuzzing),
             attestationHash: bundle.attestation.attestationHash,
             license: licenseInfo
               ? {
@@ -680,15 +711,23 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
     console.log(`\nAuditoría finalizada. Total de hallazgos: ${bundle.findings.length}`);
 
     if (policyResult.gateFailed) {
-      console.log(`[GATE FAIL] Hallazgos con severidad >= ${failOnSeverity}`);
-      process.exit(1);
+      console.log(
+        `[GATE FAIL] Hallazgos con severidad >= ${failOnSeverity} · exit=${ExitCode.GATE_FAIL} (${exitCodeLabel(ExitCode.GATE_FAIL)})`
+      );
+      process.exit(ExitCode.GATE_FAIL);
     }
 
-    console.log(`[GATE PASS] Ningún hallazgo supera el umbral ${failOnSeverity}`);
-    process.exit(0);
+    console.log(
+      `[GATE PASS] Ningún hallazgo supera el umbral ${failOnSeverity} · exit=${ExitCode.PASS} (${exitCodeLabel(ExitCode.PASS)})`
+    );
+    process.exit(ExitCode.PASS);
   } catch (error) {
-    console.error(`[Critical Error]`, (error as Error).message);
-    process.exit(1);
+    const code = classifyError(error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[Critical Error] exit=${code} (${exitCodeLabel(code)}) · ${message}`
+    );
+    process.exit(code);
   }
 });
 

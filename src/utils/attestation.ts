@@ -1,7 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 import {
   AuditAttestation,
@@ -9,6 +8,7 @@ import {
   AuditReportBundle,
   SeverityLevel
 } from '../types/audit.js';
+import { getPackageVersion } from './package_version.js';
 
 export type AttestationAlgorithm = 'SHA-256' | 'HMAC-SHA256';
 
@@ -46,15 +46,7 @@ export interface BuildAttestationOptions {
 }
 
 function resolveCliVersion(override?: string): string {
-  if (override) return override;
-  try {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const pkgPath = path.resolve(here, '../../package.json');
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as { version?: string };
-    return pkg.version ?? '1.0.0';
-  } catch {
-    return process.env.npm_package_version ?? '1.0.0';
-  }
+  return override ?? getPackageVersion();
 }
 
 /** Serialización determinista: ordena claves de objetos en profundidad. */
@@ -229,11 +221,152 @@ export function buildAttestation(
     accountId: meta.accountId ?? bundle.attestation?.accountId,
     dashboardUrl,
     verificationUrl,
-    qrPayload: ''
+    qrPayload: '',
+    activeFuzzing: payload.activeFuzzing
   };
 
   attestation.qrPayload = buildQrAttestationPayload(attestation);
   return attestation;
+}
+
+/** Informe JSON exportado por la CLI (findings.json) — input de `corecheck verify`. */
+export interface VerifiableJsonReport {
+  target: string;
+  timestamp: string;
+  environment?: string;
+  failOn: SeverityLevel;
+  gateFailed: boolean;
+  activeFuzzing?: boolean;
+  scannedPages: string[];
+  digitalQualityScore: number;
+  maxCvssScore: number;
+  severityCounts: Record<SeverityLevel, number>;
+  findings: AuditFinding[];
+  attestation?: AuditAttestation;
+}
+
+export interface AttestationVerifyResult {
+  ok: boolean;
+  algorithm: AttestationAlgorithm;
+  hashMatches: boolean;
+  hmacVerified: boolean | null;
+  expectedHash: string;
+  actualHash: string;
+  message: string;
+}
+
+/**
+ * Reconstruye el payload canónico desde findings.json y verifica hash (+ HMAC si aplica).
+ */
+export function verifyJsonReportAttestation(
+  report: VerifiableJsonReport,
+  options: { hmacSecret?: string; requireHmac?: boolean } = {}
+): AttestationVerifyResult {
+  const stored = report.attestation;
+  if (!stored?.attestationHash) {
+    return {
+      ok: false,
+      algorithm: 'SHA-256',
+      hashMatches: false,
+      hmacVerified: null,
+      expectedHash: '',
+      actualHash: '',
+      message: 'El informe no contiene attestation.attestationHash.'
+    };
+  }
+
+  const activeFuzzing =
+    report.activeFuzzing ?? stored.activeFuzzing ?? false;
+
+  const bundleLike: AuditReportBundle = {
+    target: report.target,
+    timestamp: report.timestamp,
+    scannedPages: report.scannedPages ?? [],
+    findings: report.findings ?? [],
+    digitalQualityScore: report.digitalQualityScore,
+    maxCvssScore: report.maxCvssScore,
+    severityCounts: report.severityCounts,
+    dimensions: [],
+    compliance: { frameworks: [], mappedFindingCount: 0 },
+    gateFailed: report.gateFailed,
+    failOn: report.failOn,
+    environment: (report.environment as AuditReportBundle['environment']) ?? 'prod'
+  };
+
+  const payload = buildAttestationPayload(bundleLike, {
+    cliVersion: stored.cliVersion,
+    activeFuzzing
+  });
+  const actualHash = computeAttestationHash(payload);
+  const hashMatches = actualHash === stored.attestationHash;
+
+  const secret =
+    options.hmacSecret?.trim() ||
+    process.env.CORECHECK_ATTESTATION_SECRET?.trim() ||
+    '';
+
+  const expectsHmac =
+    stored.algorithm === 'HMAC-SHA256' || Boolean(stored.hmacSignature);
+  const requireHmac = options.requireHmac ?? expectsHmac;
+
+  let hmacVerified: boolean | null = null;
+  if (requireHmac) {
+    if (!secret) {
+      return {
+        ok: false,
+        algorithm: 'HMAC-SHA256',
+        hashMatches,
+        hmacVerified: false,
+        expectedHash: stored.attestationHash,
+        actualHash,
+        message:
+          'El informe requiere HMAC pero no se proporcionó --key ni CORECHECK_ATTESTATION_SECRET.'
+      };
+    }
+    if (!stored.hmacSignature) {
+      return {
+        ok: false,
+        algorithm: 'HMAC-SHA256',
+        hashMatches,
+        hmacVerified: false,
+        expectedHash: stored.attestationHash,
+        actualHash,
+        message: 'El informe no incluye hmacSignature.'
+      };
+    }
+    hmacVerified = verifyAttestationHmac(payload, secret, stored.hmacSignature);
+  } else if (secret && stored.hmacSignature) {
+    hmacVerified = verifyAttestationHmac(payload, secret, stored.hmacSignature);
+  }
+
+  const algorithm: AttestationAlgorithm =
+    hmacVerified !== null ? 'HMAC-SHA256' : 'SHA-256';
+
+  const ok =
+    hashMatches && (hmacVerified === null || hmacVerified === true);
+
+  let message: string;
+  if (ok) {
+    message =
+      hmacVerified === true
+        ? 'Attestation válida: integridad SHA-256 y autenticidad HMAC-SHA256 verificadas.'
+        : 'Attestation válida: integridad SHA-256 verificada.';
+  } else if (!hashMatches) {
+    message =
+      'FALLO de integridad: el hash recalculado no coincide con attestationHash (informe alterado o incompleto).';
+  } else {
+    message = 'FALLO de autenticidad: la firma HMAC-SHA256 no es válida para el secret dado.';
+  }
+
+  return {
+    ok,
+    algorithm,
+    hashMatches,
+    hmacVerified,
+    expectedHash: stored.attestationHash,
+    actualHash,
+    message
+  };
 }
 
 /** @deprecated Use computeAttestationHash(buildAttestationPayload(bundle)). */

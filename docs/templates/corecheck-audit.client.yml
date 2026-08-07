@@ -1,0 +1,263 @@
+# =============================================================================
+# CoreCheck v1.0 — Plantilla CLIENTE (producción / staging)
+# =============================================================================
+# Destino en el repo del cliente:
+#   .github/workflows/corecheck-audit.yml
+#
+# NO copiar el soft self-check de `.github/workflows/audit.yml` del producto.
+# Este template:
+#   - apunta a staging real (vars.CORECHECK_TARGET_URL)
+#   - usa --fail-on HIGH por defecto
+#   - exige artefactos no vacíos
+#   - propaga exit codes 0/1/2/3/4 (nunca miente en verde)
+#   - sticky PR comment resiliente a errores de permisos
+#
+# Requisitos (Settings → Secrets and variables):
+#   Variables:
+#     CORECHECK_TARGET_URL   = https://staging.cliente.com
+#   Secrets (recomendados):
+#     CORECHECK_API_KEY
+#     CORECHECK_ATTESTATION_SECRET  (opcional, HMAC)
+# =============================================================================
+name: CoreCheck Quality Gate
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Override URL (vacío = vars.CORECHECK_TARGET_URL)'
+        required: false
+        type: string
+      fail_on:
+        description: 'Severidad mínima del gate'
+        required: false
+        default: 'HIGH'
+        type: choice
+        options: [CRITICAL, HIGH, MEDIUM, LOW, INFO]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  security-events: write
+
+jobs:
+  audit:
+    name: CoreCheck Staging Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout client repository
+        uses: actions/checkout@v4
+
+      # Instala el motor CoreCheck desde el repo de producto (tag/release estable).
+      - name: Checkout CoreCheck engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.CORECHECK_ENGINE_REPO || 'Favelas/CoreCheck' }}
+          # Pin a release tag in production (vars.CORECHECK_ENGINE_REF=v1.0.0). Default main until tagged.
+          ref: ${{ vars.CORECHECK_ENGINE_REF || 'main' }}
+          path: .corecheck
+          token: ${{ secrets.CORECHECK_ENGINE_TOKEN || github.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: .corecheck/package-lock.json
+
+      - name: Install CoreCheck dependencies
+        working-directory: .corecheck
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: .corecheck
+        run: npx playwright install --with-deps chromium
+
+      - name: Build CoreCheck CLI
+        working-directory: .corecheck
+        run: npm run build
+
+      - name: Resolve gate policy
+        id: policy
+        env:
+          INPUT_URL: ${{ github.event.inputs.target_url }}
+          VAR_URL: ${{ vars.CORECHECK_TARGET_URL }}
+          INPUT_FAIL_ON: ${{ github.event.inputs.fail_on }}
+        run: |
+          set -euo pipefail
+          target="${INPUT_URL:-}"
+          if [ -z "$target" ]; then
+            target="${VAR_URL:-}"
+          fi
+          if [ -z "$target" ]; then
+            echo "::error::Define vars.CORECHECK_TARGET_URL o pasa target_url en workflow_dispatch"
+            exit 2
+          fi
+          fail_on="${INPUT_FAIL_ON:-HIGH}"
+          echo "target_url=${target}" >> "$GITHUB_OUTPUT"
+          echo "fail_on=${fail_on}" >> "$GITHUB_OUTPUT"
+          echo "max_pages=${{ vars.CORECHECK_MAX_PAGES || '10' }}" >> "$GITHUB_OUTPUT"
+          echo "concurrency=${{ vars.CORECHECK_CONCURRENCY || '1' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Run CoreCheck CLI
+        id: corecheck
+        continue-on-error: true
+        env:
+          TARGET_URL: ${{ steps.policy.outputs.target_url }}
+          FAIL_ON: ${{ steps.policy.outputs.fail_on }}
+          MAX_PAGES: ${{ steps.policy.outputs.max_pages }}
+          CONCURRENCY: ${{ steps.policy.outputs.concurrency }}
+          CORECHECK_API_KEY: ${{ secrets.CORECHECK_API_KEY }}
+          CORECHECK_ATTESTATION_SECRET: ${{ secrets.CORECHECK_ATTESTATION_SECRET }}
+        run: |
+          set +e
+          mkdir -p audit-results
+          EXTRA_FLAGS=()
+          if [ -z "${CORECHECK_API_KEY}" ]; then
+            EXTRA_FLAGS+=(--skip-license)
+            echo "::warning::CORECHECK_API_KEY not set; using --skip-license (solo PoC)"
+          fi
+
+          echo "Target=${TARGET_URL} fail-on=${FAIL_ON} max-pages=${MAX_PAGES} concurrency=${CONCURRENCY}"
+
+          node .corecheck/dist/index.js run \
+            --url "$TARGET_URL" \
+            --fail-on "$FAIL_ON" \
+            --max-pages "$MAX_PAGES" \
+            --concurrency "$CONCURRENCY" \
+            --formats json,sarif,html,markdown,pdf \
+            --output-dir ./audit-results \
+            --flat-output \
+            --environment staging \
+            "${EXTRA_FLAGS[@]}"
+          code=$?
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Enforce required artifacts
+        id: artifacts
+        if: always()
+        run: |
+          set -euo pipefail
+          required=(
+            audit-results/findings.json
+            audit-results/results.sarif
+            audit-results/report.html
+            audit-results/report.md
+            audit-results/executive-report.pdf
+            audit-results/interactive-dashboard.html
+          )
+          missing=0
+          for f in "${required[@]}"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::Missing or empty required artifact: $f"
+              missing=1
+            else
+              bytes=$(wc -c < "$f" | tr -d ' ')
+              echo "OK $f (${bytes} bytes)"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "artifacts_ok=false" >> "$GITHUB_OUTPUT"
+            exit 4
+          fi
+          echo "artifacts_ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Optional attestation verify
+        if: always() && hashFiles('audit-results/findings.json') != ''
+        env:
+          CORECHECK_ATTESTATION_SECRET: ${{ secrets.CORECHECK_ATTESTATION_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CORECHECK_ATTESTATION_SECRET}" ]; then
+            echo "No CORECHECK_ATTESTATION_SECRET — skip HMAC verify"
+            exit 0
+          fi
+          node .corecheck/dist/index.js verify \
+            --report ./audit-results/findings.json \
+            --key "$CORECHECK_ATTESTATION_SECRET"
+
+      - name: Build PR Markdown Summary
+        if: always()
+        run: |
+          mkdir -p audit-results
+          SUMMARY="audit-results/summary.md"
+          code="${{ steps.corecheck.outputs.exit_code || 'n/a' }}"
+          label="UNKNOWN"
+          case "$code" in
+            0) label="PASS" ;;
+            1) label="GATE_FAIL" ;;
+            2) label="CONFIG" ;;
+            3) label="NETWORK" ;;
+            4) label="ENGINE" ;;
+          esac
+          {
+            echo "## CoreCheck Quality Gate (Cliente)"
+            echo
+            echo "- **Target:** \`${{ steps.policy.outputs.target_url }}\`"
+            echo "- **Fail-on:** \`${{ steps.policy.outputs.fail_on }}\`"
+            echo "- **Exit:** \`${code}\` (${label})"
+            echo "- **Artifacts OK:** \`${{ steps.artifacts.outputs.artifacts_ok || 'n/a' }}\`"
+            echo
+            echo "| Code | Meaning |"
+            echo "| ---: | :--- |"
+            echo "| 0 | PASS |"
+            echo "| 1 | GATE_FAIL (umbrales) |"
+            echo "| 2 | CONFIG / licencia |"
+            echo "| 3 | NETWORK / WAF / unreachable |"
+            echo "| 4 | ENGINE / Playwright / OOM |"
+            echo
+          } > "$SUMMARY"
+
+          if [ -f audit-results/report.md ]; then
+            echo "### Report" >> "$SUMMARY"
+            echo >> "$SUMMARY"
+            cat audit-results/report.md >> "$SUMMARY"
+          fi
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corecheck-audit-results
+          path: ./audit-results
+          if-no-files-found: error
+
+      - name: Upload SARIF to Code Scanning
+        if: always() && hashFiles('audit-results/results.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ./audit-results/results.sarif
+          category: corecheck
+
+      # Hiper-resiliente: fallo de permisos/comentarios NO tumba el Quality Gate.
+      - name: Sticky PR comment
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: corecheck-client-gate
+          path: ./audit-results/summary.md
+
+      - name: Enforce Quality Gate Exit Code
+        if: always()
+        run: |
+          set -euo pipefail
+          code="${{ steps.corecheck.outputs.exit_code }}"
+          if [ -z "$code" ]; then
+            echo "::error::CoreCheck did not produce an exit code"
+            exit 4
+          fi
+          case "$code" in
+            0) echo "PASS" ;;
+            1) echo "::error::GATE_FAIL"; exit 1 ;;
+            2) echo "::error::CONFIG"; exit 2 ;;
+            3) echo "::error::NETWORK"; exit 3 ;;
+            4) echo "::error::ENGINE"; exit 4 ;;
+            *) echo "::error::Unexpected exit ${code}"; exit "$code" ;;
+          esac

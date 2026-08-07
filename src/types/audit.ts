@@ -2,7 +2,7 @@ export type SeverityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 export type OutputFormat = 'json' | 'sarif' | 'html' | 'markdown' | 'pdf';
 export type AuditEnvironment = 'prod' | 'staging' | 'dev';
 
-/** Categoría funcional del hallazgo (Security / A11y / Network / Digital Quality). */
+/** Categoría funcional del hallazgo (Security / A11y / Network / Digital Quality / Infra). */
 export type RuleCategory =
   | 'SECURITY'
   | 'A11Y'
@@ -10,7 +10,8 @@ export type RuleCategory =
   | 'QUALITY'
   | 'PERFORMANCE'
   | 'SEO'
-  | 'PRIVACY';
+  | 'PRIVACY'
+  | 'INFRA';
 
 /** Dimensiones ejecutivas del Quality Score (Fase 3). */
 export type AuditDimension =
@@ -37,7 +38,9 @@ export type RuleType =
   | 'SEO_LLM_READINESS'
   | 'PRIVACY_COOKIE'
   | 'PRIVACY_CONSENT'
-  | 'PRIVACY_POLICY_LINK';
+  | 'PRIVACY_POLICY_LINK'
+  /** Fallo de infraestructura del motor (inspector crash, degradación controlada). */
+  | 'INFRA_FAILURE';
 
 /** Marcos normativos soportados por el compliance mapper. */
 export type ComplianceFramework =
@@ -264,6 +267,8 @@ export interface AuditAttestation {
   verificationUrl: string;
   /** Payload estructurado embebido en el QR del PDF. */
   qrPayload?: string;
+  /** Flag de fuzzing activo incluido en el payload canónico (verify offline). */
+  activeFuzzing?: boolean;
 }
 
 export interface WebhookNotifyOptions {

@@ -63,10 +63,13 @@ Vista de alto nivel del motor. Para reglas de contribución y DoD, ver [CONTRIBU
 
 | Área | Ruta |
 | :--- | :--- |
-| CLI | `src/cli/index.ts`, `src/cli/cli_contract.ts` |
+| CLI (`run` / `verify`) | `src/cli/index.ts`, `src/cli/verify_command.ts`, `src/cli/cli_contract.ts` |
+| Exit codes | `src/utils/exit_codes.ts` |
 | Crawler / runner | `src/core/crawler.ts`, `src/core/audit_runner.ts` |
+| ResourceBudget (OOM guard) | `src/utils/resource_budget.ts` |
 | Policy / baseline | `src/core/policy_engine.ts` |
+| Attestation | `src/utils/attestation.ts` |
 | SARIF | `src/utils/sarif_exporter.ts` |
-| Workflows | `.github/workflows/` |
+| Workflows | `.github/workflows/` + `docs/templates/corecheck-audit.client.yml` |
 
 ← [Índice docs](./README.md) · [README producto](../README.md)

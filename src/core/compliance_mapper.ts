@@ -314,6 +314,10 @@ export class ComplianceMapper {
     if (category === 'SECURITY' || finding.ruleId.startsWith('SEC-')) {
       return 'SECURITY';
     }
+    // Fallos de infraestructura del motor pesan en el score de seguridad (gate visible).
+    if (category === 'INFRA' || finding.ruleType === 'INFRA_FAILURE' || finding.ruleId.startsWith('INFRA-')) {
+      return 'SECURITY';
+    }
     // Default: security bucket for uncategorized SecOps findings
     return this.inferFromRuleId(finding.ruleId, category);
   }

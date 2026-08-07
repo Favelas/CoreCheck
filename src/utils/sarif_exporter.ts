@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import { AuditFinding, AuditReportBundle, SeverityLevel } from '../types/audit.js';
+import { getPackageVersion } from './package_version.js';
 
 function mapSeverityToSarifLevel(severity: SeverityLevel): 'error' | 'warning' | 'note' {
   switch (severity) {
@@ -248,7 +249,7 @@ export async function exportToSarif(
         tool: {
           driver: {
             name: 'CoreCheck DevSecOps Engine',
-            version: '3.0.0-enterprise',
+            version: getPackageVersion(),
             informationUri: 'https://github.com/corecheck/engine',
             rules
           }

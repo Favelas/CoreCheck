@@ -22,6 +22,11 @@ import {
   OutputFormat
 } from '../types/audit.js';
 import { sanitizeAndBudgetEvidence } from '../utils/evidence.js';
+import { CoreCheckError } from '../utils/exit_codes.js';
+import {
+  chromiumLaunchArgsForBudget,
+  clampConcurrency
+} from '../utils/resource_budget.js';
 import { AuthHandler } from './auth_handler.js';
 import { SiteCrawler } from './crawler.js';
 import { ZeroFPEngine } from './zero_fp_engine.js';
@@ -42,11 +47,20 @@ export class AuditRunner {
 
   constructor(options: AuditExecutionOptions) {
     const defaultFormats: OutputFormat[] = ['json', 'sarif'];
+    const requestedConcurrency = options.concurrency ?? 2;
+    const budget = clampConcurrency({
+      requestedConcurrency,
+      activeFuzzing: options.activeFuzzing ?? false
+    });
+
+    if (budget.capped && budget.reason) {
+      console.warn(`[ResourceBudget] ${budget.reason}`);
+    }
 
     this.options = {
       targetUrl: options.targetUrl,
       storageStatePath: options.storageStatePath ?? '',
-      concurrency: options.concurrency ?? 2,
+      concurrency: budget.concurrency,
       timeoutMs: options.timeoutMs ?? 30000,
       maxRetries: options.maxRetries ?? 2,
       activeFuzzing: options.activeFuzzing ?? false,
@@ -72,14 +86,17 @@ export class AuditRunner {
     await fs.mkdir(baseDir, { recursive: true });
 
     try {
-      browser = await chromium.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-blink-features=AutomationControlled'
-        ]
-      });
+      try {
+        browser = await chromium.launch({
+          headless: true,
+          args: chromiumLaunchArgsForBudget()
+        });
+      } catch (launchError) {
+        throw new CoreCheckError(
+          `No se pudo lanzar Chromium/Playwright: ${(launchError as Error).message}`,
+          'ENGINE'
+        );
+      }
 
       const contextOptions: BrowserContextOptions = {
         ...(this.options.storageStatePath ? { storageState: this.options.storageStatePath } : {}),
@@ -97,20 +114,30 @@ export class AuditRunner {
 
       if (this.options.authConfig) {
         const authHandler = new AuthHandler();
-        const authResult = await authHandler.authenticate(
-          crawlContext,
-          this.options.authConfig,
-          this.options.timeoutMs
-        );
+        try {
+          const authResult = await authHandler.authenticate(
+            crawlContext,
+            this.options.authConfig,
+            this.options.timeoutMs
+          );
 
-        if (authResult.extraHTTPHeaders) {
-          contextOptions.extraHTTPHeaders = {
-            ...(contextOptions.extraHTTPHeaders ?? {}),
-            ...authResult.extraHTTPHeaders
-          };
-        }
-        if (authResult.storageState) {
-          contextOptions.storageState = authResult.storageState;
+          if (authResult.extraHTTPHeaders) {
+            contextOptions.extraHTTPHeaders = {
+              ...(contextOptions.extraHTTPHeaders ?? {}),
+              ...authResult.extraHTTPHeaders
+            };
+          }
+          if (authResult.storageState) {
+            contextOptions.storageState = authResult.storageState;
+          }
+        } catch (authError) {
+          const msg = (authError as Error).message;
+          const looksNetwork =
+            /ENOTFOUND|ECONNREFUSED|Timeout|net::ERR_|403|429|unreachable/i.test(msg);
+          throw new CoreCheckError(
+            `Fallo de autenticación previa al crawl: ${msg}`,
+            looksNetwork ? 'NETWORK' : 'CONFIG'
+          );
         }
       }
 
@@ -297,96 +324,156 @@ export class AuditRunner {
       console.warn(`[WARN] No se obtuvo respuesta HTTP principal para ${pageUrl}.`);
     }
 
-    const inspectorTasks: Promise<AuditFinding[]>[] = [];
-
-    inspectorTasks.push(consoleInspector.inspectStorage());
-    inspectorTasks.push(new A11yRealInspector(page).inspect());
-    inspectorTasks.push(networkInspector.collect());
-    inspectorTasks.push(performanceInspector.inspect(pageUrl));
-    inspectorTasks.push(new SeoGeoInspector(page).inspect(pageUrl));
-    // llm.txt es origin-scoped; se ejecuta en todas las páginas y el consolidator lo fusiona.
-    inspectorTasks.push(new LlmReadinessInspector(page).inspect(pageUrl));
-    inspectorTasks.push(privacyInspector.inspect(pageUrl));
-    inspectorTasks.push(
-      visualMetaInspector.inspectMetadata().then((issues) =>
-        issues.map(
-          (issue): AuditFinding => ({
-            id: `META-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-            ruleId: issue.type,
-            title: issue.message,
-            severity: issue.severity === 'LOW' ? 'LOW' : 'INFO',
-            description: issue.message,
-            evidence: {
-              url: pageUrl,
-              screenshotPath: `${baseDir}/screenshots/evidence_landing.png`
-            },
-            remediation: {
-              explanation:
-                'Remueva la etiqueta <meta name="generator"> o configure el servidor para no exponer la versión exacta.',
-              codeBefore: '<meta name="generator" content="Framework/v1.0">',
-              codeAfter: '<!-- Remover la etiqueta meta generator -->'
-            },
-            standards: {
-              owasp: ['A05:2021-Security Misconfiguration'],
-              cwe: ['CWE-200']
-            }
-          })
+    const namedInspectors: Array<{ name: string; task: Promise<AuditFinding[]> }> = [
+      { name: 'ConsoleDataInspector', task: consoleInspector.inspectStorage() },
+      { name: 'A11yRealInspector', task: new A11yRealInspector(page).inspect() },
+      { name: 'NetworkPassiveInspector', task: networkInspector.collect() },
+      { name: 'PerformanceInspector', task: performanceInspector.inspect(pageUrl) },
+      { name: 'SeoGeoInspector', task: new SeoGeoInspector(page).inspect(pageUrl) },
+      // llm.txt es origin-scoped; se ejecuta en todas las páginas y el consolidator lo fusiona.
+      { name: 'LlmReadinessInspector', task: new LlmReadinessInspector(page).inspect(pageUrl) },
+      { name: 'PrivacyInspector', task: privacyInspector.inspect(pageUrl) },
+      {
+        name: 'VisualMetaInspector',
+        task: visualMetaInspector.inspectMetadata().then((issues) =>
+          issues.map(
+            (issue): AuditFinding => ({
+              id: `META-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              ruleId: issue.type,
+              title: issue.message,
+              severity: issue.severity === 'LOW' ? 'LOW' : 'INFO',
+              description: issue.message,
+              evidence: {
+                url: pageUrl,
+                screenshotPath: `${baseDir}/screenshots/evidence_landing.png`
+              },
+              remediation: {
+                explanation:
+                  'Remueva la etiqueta <meta name="generator"> o configure el servidor para no exponer la versión exacta.',
+                codeBefore: '<meta name="generator" content="Framework/v1.0">',
+                codeAfter: '<!-- Remover la etiqueta meta generator -->'
+              },
+              standards: {
+                owasp: ['A05:2021-Security Misconfiguration'],
+                cwe: ['CWE-200']
+              }
+            })
+          )
         )
-      )
-    );
+      },
+      {
+        name: 'FormActiveInspector',
+        task: (async (): Promise<AuditFinding[]> => {
+          const formCtx = await browser.newContext(contextOptions);
+          formCtx.setDefaultTimeout(this.options.timeoutMs);
+          contextsToClose.push(formCtx);
 
-    const formTask = (async (): Promise<AuditFinding[]> => {
-      const formCtx = await browser.newContext(contextOptions);
-      formCtx.setDefaultTimeout(this.options.timeoutMs);
-      contextsToClose.push(formCtx);
+          const formPage = await formCtx.newPage();
+          const resp = await formPage.goto(pageUrl, { waitUntil: 'domcontentloaded' });
 
-      const formPage = await formCtx.newPage();
-      const resp = await formPage.goto(pageUrl, { waitUntil: 'domcontentloaded' });
+          if (!resp || !resp.ok()) {
+            console.error(
+              `[ERROR] FormInspector no pudo cargar ${pageUrl}. Status: ${resp?.status()}`
+            );
+            return [
+              this.buildInfraFailureFinding(
+                'FormActiveInspector',
+                pageUrl,
+                `No se pudo cargar la página para auditoría de formularios (HTTP ${resp?.status() ?? 'n/a'}).`
+              )
+            ];
+          }
 
-      if (!resp || !resp.ok()) {
-        console.error(
-          `[ERROR] FormInspector no pudo cargar ${pageUrl}. Status: ${resp?.status()}`
-        );
-        return [];
+          const formInspector = new FormActiveInspector(formPage);
+          return formInspector.executeActiveFuzzing();
+        })()
       }
-
-      const formInspector = new FormActiveInspector(formPage);
-      return formInspector.executeActiveFuzzing();
-    })();
-    inspectorTasks.push(formTask);
+    ];
 
     if (this.options.activeFuzzing) {
-      const fuzzTask = (async (): Promise<AuditFinding[]> => {
-        const fuzzCtx = await browser.newContext(contextOptions);
-        fuzzCtx.setDefaultTimeout(this.options.timeoutMs);
-        contextsToClose.push(fuzzCtx);
+      namedInspectors.push({
+        name: 'FuzzingInspector',
+        task: (async (): Promise<AuditFinding[]> => {
+          const fuzzCtx = await browser.newContext(contextOptions);
+          fuzzCtx.setDefaultTimeout(this.options.timeoutMs);
+          contextsToClose.push(fuzzCtx);
 
-        const fuzzPage = await fuzzCtx.newPage();
-        const resp = await fuzzPage.goto(pageUrl, { waitUntil: 'domcontentloaded' });
+          const fuzzPage = await fuzzCtx.newPage();
+          const resp = await fuzzPage.goto(pageUrl, { waitUntil: 'domcontentloaded' });
 
-        if (!resp || !resp.ok()) {
-          console.error(
-            `[ERROR] FuzzingInspector no pudo cargar ${pageUrl}. Status: ${resp?.status()}`
-          );
-          return [];
-        }
+          if (!resp || !resp.ok()) {
+            console.error(
+              `[ERROR] FuzzingInspector no pudo cargar ${pageUrl}. Status: ${resp?.status()}`
+            );
+            return [
+              this.buildInfraFailureFinding(
+                'FuzzingInspector',
+                pageUrl,
+                `No se pudo cargar la página para fuzzing activo (HTTP ${resp?.status() ?? 'n/a'}).`
+              )
+            ];
+          }
 
-        const fuzzingInspector = new FuzzingInspector(fuzzPage);
-        return fuzzingInspector.executeFuzzing();
-      })();
-      inspectorTasks.push(fuzzTask);
+          const fuzzingInspector = new FuzzingInspector(fuzzPage);
+          return fuzzingInspector.executeFuzzing();
+        })()
+      });
     }
 
-    const results = await Promise.allSettled(inspectorTasks);
+    const results = await Promise.allSettled(namedInspectors.map((n) => n.task));
     results.forEach((result, index) => {
+      const inspectorName = namedInspectors[index]?.name ?? `Inspector#${index}`;
       if (result.status === 'fulfilled') {
         findings.push(...result.value);
       } else {
-        console.error(`[CRITICAL] Inspector en índice ${index} colapsó:`, result.reason);
+        const reason =
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason);
+        console.error(`[INFRA_FAILURE] ${inspectorName} colapsó:`, reason);
+        findings.push(
+          this.buildInfraFailureFinding(inspectorName, pageUrl, reason)
+        );
       }
     });
 
     return findings;
+  }
+
+  /** Hallazgo explícito cuando un inspector falla — evita degradación silenciosa. */
+  private buildInfraFailureFinding(
+    inspectorName: string,
+    pageUrl: string,
+    reason: string
+  ): AuditFinding {
+    const safeReason = reason.slice(0, 512);
+    return {
+      id: `INFRA-${inspectorName}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      ruleId: 'INFRA-INSPECTOR-FAILURE',
+      title: `Fallo de infraestructura: ${inspectorName}`,
+      severity: 'HIGH',
+      category: 'INFRA',
+      ruleType: 'INFRA_FAILURE',
+      confidence: 'HIGH',
+      description:
+        `El inspector "${inspectorName}" abortó durante el escaneo de '${pageUrl}'. ` +
+        `La dimensión correspondiente puede estar incompleta. Motivo: ${safeReason}`,
+      evidence: {
+        url: pageUrl,
+        snippet: safeReason
+      },
+      remediation: {
+        explanation:
+          'Revise logs del runner, estabilidad de Playwright y timeouts. Re-ejecute el gate; ' +
+          'si persiste, abra incidente interno (playbook Enterprise).',
+        codeBefore: '// Inspector crash silenciado → falso negativo',
+        codeAfter: '// INFRA-INSPECTOR-FAILURE visible en gate + artefactos'
+      },
+      standards: {
+        owasp: ['A05:2021-Security Misconfiguration'],
+        cwe: ['CWE-754']
+      }
+    };
   }
 
   private stampPageUrl(

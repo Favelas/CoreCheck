@@ -48,58 +48,67 @@ Antes de tocar código, confirma con el cliente estos puntos. Márcalos juntos e
 
 ### 2.1 Qué archivo se agrega
 
-Copia el workflow de auditoría al repo del cliente:
+Copia la **plantilla de cliente** (no el soft self-check del repo producto):
 
-**Origen (este producto):** [`.github/workflows/audit.yml`](../.github/workflows/audit.yml)  
-**Destino (cliente):** `.github/workflows/corecheck-audit.yml`  
-(puedes mantener el nombre `audit.yml`; lo importante es la carpeta).
+| | |
+| :--- | :--- |
+| **Origen** | [`docs/templates/corecheck-audit.client.yml`](../templates/corecheck-audit.client.yml) |
+| **Destino (cliente)** | `.github/workflows/corecheck-audit.yml` |
+
+> El workflow [`.github/workflows/audit.yml`](../../.github/workflows/audit.yml) del producto es un **self-check interno** (`example.com` + `fail-on CRITICAL`).  
+> En clientes usa siempre la plantilla con **staging real** y **`--fail-on HIGH`**.
 
 ### 2.2 Pasos visuales (GitHub UI)
 
 1. Abre el repositorio del cliente en GitHub.
 2. Pulsa **Add file → Create new file**.
 3. Escribe la ruta exactamente: `.github/workflows/corecheck-audit.yml`
-4. Pega el contenido del workflow (o súbelo vía PR desde tu fork/plantilla).
+4. Pega el contenido de `docs/templates/corecheck-audit.client.yml`.
 5. Commit a una rama (ej. `chore/add-corecheck-gate`) — **no** merges a `main` sin la prueba de la FASE 4.
 
-### 2.3 Cómo se define la URL objetivo
+### 2.3 Variables y secrets del cliente
 
-El workflow soporta dos modos:
+| Tipo | Nombre | Ejemplo / notas |
+| :--- | :--- | :--- |
+| Variable | `CORECHECK_TARGET_URL` | `https://staging.cliente.com` (**obligatoria**) |
+| Variable | `CORECHECK_ENGINE_REPO` | default `Favelas/CoreCheck` |
+| Variable | `CORECHECK_ENGINE_REF` | pin de release (`v1.0.0`); default `main` hasta taggear |
+| Variable | `CORECHECK_MAX_PAGES` | default `10` |
+| Variable | `CORECHECK_CONCURRENCY` | default `2` (runners pequeños GHA: preferir `1`; hay auto-cap ≤2) |
+| Secret | `CORECHECK_API_KEY` | comercial; sin él el gate avisa y usa `--skip-license` (solo PoC) |
+| Secret | `CORECHECK_ATTESTATION_SECRET` | opcional; habilita verify HMAC |
+| Secret | `CORECHECK_ENGINE_TOKEN` | solo si el motor es repo privado |
+
+### 2.4 Cómo se define la URL objetivo
 
 | Modo | Cuándo se usa | Cómo se configura la URL |
 | :--- | :--- | :--- |
-| **Pull Request** | Cada PR hacia `main`/`master` | Por defecto el workflow de producto hace smoke; en el cliente debes fijar la URL de **su** staging |
-| **Manual (workflow_dispatch)** | “Run workflow” desde Actions | Input `target_url` en la UI de GitHub |
-
-#### Ajuste típico para el cliente (staging fijo)
-
-En el job, asegúrate de que la URL del cliente quede explícita, por ejemplo:
-
-```yaml
-env:
-  TARGET_URL: https://staging.cliente.com
-```
-
-O, si usas `workflow_dispatch`:
-
-1. GitHub → pestaña **Actions**
-2. Selecciona **CoreCheck Quality Gate**
-3. **Run workflow**
-4. Completa `target_url` con la URL de staging / preview de Vercel / Netlify
-5. Opcional: `fail_on` = `HIGH` (recomendado en staging) o `CRITICAL` (más permisivo)
+| **Pull Request** | Cada PR hacia `main`/`master` | `vars.CORECHECK_TARGET_URL` (staging fijo) |
+| **Manual (workflow_dispatch)** | “Run workflow” desde Actions | Input `target_url` (override) + `fail_on` |
 
 #### Preview de Vercel / Netlify
 
 - Pide al cliente el enlace del **deploy preview** del PR de la aplicación.
-- Pégalo en `target_url` del run manual, o parametrízalo con un secret/variable `CORECHECK_TARGET_URL` si el preview es estable por entorno.
+- Pégalo en `target_url` del run manual, o parametrízalo con `CORECHECK_TARGET_URL` si el preview es estable por entorno.
 
-### 2.4 Qué debe producir el workflow (señales de salud)
+### 2.5 Exit codes (Quality Gate endurecido)
+
+| Código | Significado | ¿Job rojo? |
+| :---: | :--- | :---: |
+| `0` | PASS | No |
+| `1` | GATE_FAIL (umbrales) | Sí |
+| `2` | CONFIG / licencia / args | Sí |
+| `3` | NETWORK / WAF / unreachable | Sí |
+| `4` | ENGINE / Playwright / artefactos incompletos | Sí |
+
+### 2.6 Qué debe producir el workflow (señales de salud)
 
 Tras un run exitoso deberías ver:
 
-- Artifact descargable (`corecheck-audit-results`)
-- Comentario en el PR (sticky) con resumen
-- (Si Code Scanning está habilitado) upload SARIF
+- Artifact descargable (`corecheck-audit-results`) con **todos** los archivos canónicos no vacíos:
+  `findings.json`, `results.sarif`, `report.html`, `report.md`, `executive-report.pdf`, `interactive-dashboard.html`
+- Sticky comment en el PR (si falla por permisos, el gate **sigue** evaluando el exit code)
+- SARIF en Code Scanning (best-effort; fallo de upload no tumba el gate)
 
 ---
 
@@ -242,6 +251,17 @@ No “apesantigües” el código del motor. Usa baseline / ignore del cliente:
 
 → Ver [ENTERPRISE_SCALING_GUIDE.md](./ENTERPRISE_SCALING_GUIDE.md) sección de baselines.
 
+### 5.6 Exit 4 / OOM / runners pequeños (2 vCPU · 7 GB)
+
+**Síntomas:** job rojo con exit `4`, logs Playwright “Target closed”, o falta de artefactos.
+
+**Qué hacer:**
+
+1. Fijar `vars.CORECHECK_CONCURRENCY=1`.
+2. Buscar en logs `[ResourceBudget] Concurrency capped …` (cap automático ≤ 2 en GHA).
+3. Bajar `CORECHECK_MAX_PAGES` a `3–5` en el primer mes.
+4. Re-run; si persiste, abrir incidente interno (no es GATE_FAIL de la app).
+
 ---
 
 ## Contacto y siguientes pasos
@@ -253,5 +273,6 @@ No “apesantigües” el código del motor. Usa baseline / ignore del cliente:
 Documentación relacionada:
 
 - [README del producto](../README.md)
+- [Commercial Playbook](./COMMERCIAL_PLAYBOOK.md)
 - [Guía Enterprise / Escalabilidad](./ENTERPRISE_SCALING_GUIDE.md)
 - [Arquitectura del motor](./ARCHITECTURE.md)

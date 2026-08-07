@@ -21,12 +21,16 @@ export function sanitizeAndBudgetEvidence(
     return { snippet: rawSnippet };
   }
 
-  // Si excede 2KB, truncar snippet y volcar DOM completo a disco
+  // Si excede 2KB, truncar snippet (incluye marcador dentro del presupuesto) y volcar DOM a disco.
   if (!fs.existsSync(artifactsDir)) {
     fs.mkdirSync(artifactsDir, { recursive: true });
   }
 
-  const truncatedSnippet = snippetBuffer.subarray(0, MAX_SNIPPET_BYTES).toString('utf-8') + '\n... [TRUNCATED]';
+  const marker = '\n... [TRUNCATED]';
+  const markerBytes = Buffer.byteLength(marker, 'utf-8');
+  const keepBytes = Math.max(0, MAX_SNIPPET_BYTES - markerBytes);
+  const truncatedSnippet =
+    snippetBuffer.subarray(0, keepBytes).toString('utf-8') + marker;
   const fileName = `dom-evidence-${findingId}.html`;
   const fullPath = path.join(artifactsDir, fileName);
 

@@ -4,7 +4,7 @@
 
 | | |
 | :--- | :--- |
-| **Versión** | 1.0 (Release Candidate / GTM) |
+| **Versión** | 1.0 Enterprise Hardened |
 | **Runtime** | Node.js 20+ · Playwright (Chromium) |
 | **Salidas** | HTML · PDF (attestation) · SARIF 2.1.0 · JSON · Markdown |
 | **Rol típico** | Quality Gate en Pull Requests (GitHub Actions) |
@@ -51,7 +51,7 @@ cd CoreCheck
 npm install          # también instala Chromium vía postinstall
 npm run build        # genera dist/
 npm run typecheck    # debe quedar en 0 errores
-npm test             # contratos CLI + SARIF
+npm test             # suite endurecida (contratos, attestation, policy, artefactos, Playwright, budget)
 ```
 
 ---
@@ -83,6 +83,7 @@ node dist/index.js run \
 | `--output-dir` | Carpeta de salida (con subcarpeta fechada) | `--output-dir ./audit-results` |
 | `--flat-output` | Sin subcarpeta fechada (ideal CI) | `--flat-output` |
 | `--max-pages` | Límite de páginas del crawler | `--max-pages 10` |
+| `--concurrency` | Workers Playwright (auto-cap en CI/memoria baja) | `--concurrency 2` |
 | `--baseline` | Suppressions / excepciones aceptadas | `--baseline .corecheckignore` |
 
 También puedes usar el subcomando explícito: `node dist/index.js run ...` o `npm run audit -- --url ...`.
@@ -109,8 +110,16 @@ Por defecto (sin `--flat-output`) los archivos quedan en:
 | Código | Significado |
 | :---: | :--- |
 | `0` | PASS — ningún hallazgo activo ≥ `--fail-on` |
-| `1` | FAIL — hay hallazgos ≥ umbral (o error crítico de ejecución) |
-| `2` | Config / licencia / módulo no permitido |
+| `1` | GATE FAIL — umbral de severidad superado (o `verify` fallido) |
+| `2` | CONFIG — argumentos CLI inválidos / licencia / baseline |
+| `3` | NETWORK — target inalcanzable / WAF / timeout de conectividad |
+| `4` | ENGINE — fallo interno Playwright / OOM / crash del motor |
+
+Verificación offline de attestation:
+
+```bash
+node dist/index.js verify --report ./audit-results/findings.json --key "$CORECHECK_ATTESTATION_SECRET"
+```
 
 ---
 
@@ -120,8 +129,9 @@ Este repositorio incluye:
 
 | Workflow | Archivo | Propósito |
 | :--- | :--- | :--- |
-| CoreCheck CI & Quality Gate | [`.github/workflows/corecheck-ci.yml`](.github/workflows/corecheck-ci.yml) | typecheck, build, tests, smoke |
-| CoreCheck Quality Gate (DAST) | [`.github/workflows/audit.yml`](.github/workflows/audit.yml) | auditoría + SARIF + comentario PR |
+| CoreCheck CI & Quality Gate | [`.github/workflows/corecheck-ci.yml`](.github/workflows/corecheck-ci.yml) | typecheck, build, tests, smoke **duro** (artefactos obligatorios) |
+| CoreCheck Quality Gate (producto) | [`.github/workflows/audit.yml`](.github/workflows/audit.yml) | self-check interno + SARIF |
+| **Plantilla cliente (staging)** | [`docs/templates/corecheck-audit.client.yml`](docs/templates/corecheck-audit.client.yml) | gate real `--fail-on HIGH` |
 
 **Para onboarding de un cliente nuevo**, sigue la guía paso a paso:
 
@@ -134,6 +144,7 @@ Este repositorio incluye:
 | Documento | Contenido |
 | :--- | :--- |
 | [Onboarding de clientes](docs/ONBOARDING_GUIDE.md) | 5 fases para activar CoreCheck en un repo cliente |
+| [Commercial Playbook](docs/COMMERCIAL_PLAYBOOK.md) | Posicionamiento, SLA exit codes, handoff Sales→CS |
 | [Escalabilidad Enterprise](docs/ENTERPRISE_SCALING_GUIDE.md) | DoD interno, baselines, roadmap v1.1 |
 | [Arquitectura](docs/ARCHITECTURE.md) | Diagrama del motor (CLI → inspectors → exporters) |
 | [Contributing](docs/CONTRIBUTING.md) | Reglas para contribuidores internos |
@@ -147,7 +158,7 @@ Este repositorio incluye:
 | :--- | :--- |
 | `npm run typecheck` | TypeScript sin emitir (`tsc --noEmit`) — **0 errores obligatorio** |
 | `npm run build` | Compila a `dist/` |
-| `npm test` | typecheck + contratos CLI/SARIF |
+| `npm test` | typecheck + contratos CLI/SARIF + exit codes + attestation + policy + artefactos + Playwright cleanup |
 | `npm run audit` | Lanza la CLI vía `tsx` (pasa flags después de `--`) |
 | `npm run reports:prepare` | Prepara carpetas `shared_reports` para Vercel |
 
@@ -155,9 +166,19 @@ Este repositorio incluye:
 
 ## Alcance v1.0 (congelado)
 
-**Incluido hoy:** Quality Gate unificado, deduplicación site-level, attestation, SARIF, ticketing HTTP (Jira/Azure/GitLab), webhooks HMAC, INP, `/llm.txt`.
+**Incluido hoy:** Quality Gate unificado, deduplicación site-level, attestation + `verify`, exit codes 0–4, INFRA_FAILURE, CI duro, ResourceBudget (cap concurrencia), SARIF, ticketing HTTP, webhooks HMAC, INP, `/llm.txt`.
 
 **Fuera de alcance (post-revenue / v1.1+):** Dashboard SaaS multi-tenant, SSO/SAML, DAST ofensivo profundo, Action oficial de Marketplace (planificado). Detalle en [ENTERPRISE_SCALING_GUIDE](docs/ENTERPRISE_SCALING_GUIDE.md).
+
+### Runners CI (memoria)
+
+En GitHub Actions (≈ 2 vCPU / 7 GB) CoreCheck aplica **ResourceBudget**:
+
+- Hard cap de concurrencia = **2** (aunque pidas más)
+- Chromium con `--disable-dev-shm-usage`
+- Log de aviso: `[ResourceBudget] Concurrency capped …`
+
+Para runners pequeños usa `vars.CORECHECK_CONCURRENCY=1` en la plantilla cliente.
 
 ---
 

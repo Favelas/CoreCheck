@@ -747,9 +747,9 @@ export class PdfReporter {
     const affectedUrls = [
       ...new Set(
         [
-          ...(finding.evidence.locations?.map((l) => l.url).filter(Boolean) as string[]),
+          ...(finding.evidence.locations?.map((l) => l.url).filter(Boolean) ?? []),
           ...(finding.evidence.url ? [finding.evidence.url] : [])
-        ].filter(Boolean)
+        ].filter((u): u is string => Boolean(u))
       )
     ];
     if (affectedUrls.length > 1) {

@@ -1,3 +1,6 @@
+# Product-repo self-check (CoreCheck itself).
+# For customer staging gates, copy:
+#   docs/templates/corecheck-audit.client.yml  →  .github/workflows/corecheck-audit.yml
 name: CoreCheck Quality Gate
 
 on:
@@ -40,8 +43,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright OS dependencies
-        run: npx playwright install-deps chromium
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Build CoreCheck CLI
         run: npm run build
@@ -50,14 +53,19 @@ jobs:
         id: policy
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # PR self-check: valida motor + artefactos; no bloquear por hallazgos HIGH de example.com.
+            # Product self-check: motor + artefactos sobre example.com.
+            # Clientes NO deben copiar este soft PR policy — usar el template cliente.
             echo "fail_on=CRITICAL" >> "$GITHUB_OUTPUT"
             echo "max_pages=3" >> "$GITHUB_OUTPUT"
+            echo "concurrency=1" >> "$GITHUB_OUTPUT"
             echo "target_url=https://example.com" >> "$GITHUB_OUTPUT"
+            echo "mode=product-self-check" >> "$GITHUB_OUTPUT"
           else
             echo "fail_on=${{ github.event.inputs.fail_on || 'HIGH' }}" >> "$GITHUB_OUTPUT"
             echo "max_pages=10" >> "$GITHUB_OUTPUT"
+            echo "concurrency=2" >> "$GITHUB_OUTPUT"
             echo "target_url=${{ github.event.inputs.target_url || 'https://example.com' }}" >> "$GITHUB_OUTPUT"
+            echo "mode=manual-dispatch" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run CoreCheck CLI
@@ -67,6 +75,7 @@ jobs:
           TARGET_URL: ${{ steps.policy.outputs.target_url }}
           FAIL_ON: ${{ steps.policy.outputs.fail_on }}
           MAX_PAGES: ${{ steps.policy.outputs.max_pages }}
+          CONCURRENCY: ${{ steps.policy.outputs.concurrency }}
           CORECHECK_API_KEY: ${{ secrets.CORECHECK_API_KEY }}
         run: |
           set +e
@@ -77,12 +86,13 @@ jobs:
             echo "::warning::CORECHECK_API_KEY secret not set; running with --skip-license"
           fi
 
-          echo "Target=${TARGET_URL} fail-on=${FAIL_ON} max-pages=${MAX_PAGES}"
+          echo "mode=${{ steps.policy.outputs.mode }} Target=${TARGET_URL} fail-on=${FAIL_ON} max-pages=${MAX_PAGES}"
 
           node dist/index.js run \
             --url "$TARGET_URL" \
             --fail-on "$FAIL_ON" \
             --max-pages "$MAX_PAGES" \
+            --concurrency "$CONCURRENCY" \
             --formats json,sarif,html,markdown,pdf \
             --output-dir ./audit-results \
             --flat-output \
@@ -90,21 +100,62 @@ jobs:
             "${EXTRA_FLAGS[@]}"
           code=$?
           echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
-          # Preserve gate semantics for the final job conclusion below.
+          # Preserve taxonomy for the final enforce step (0/1/2/3/4).
           exit 0
+
+      - name: Enforce required audit artifacts
+        id: artifacts
+        if: always()
+        run: |
+          set -euo pipefail
+          required=(
+            audit-results/findings.json
+            audit-results/results.sarif
+            audit-results/report.html
+            audit-results/report.md
+            audit-results/executive-report.pdf
+            audit-results/interactive-dashboard.html
+          )
+          missing=0
+          for f in "${required[@]}"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::Missing or empty required artifact: $f"
+              missing=1
+            else
+              bytes=$(wc -c < "$f" | tr -d ' ')
+              echo "OK $f (${bytes} bytes)"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "artifacts_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Audit artifacts incomplete"
+            exit 4
+          fi
+          echo "artifacts_ok=true" >> "$GITHUB_OUTPUT"
 
       - name: Build PR Markdown Summary
         if: always()
         run: |
           mkdir -p audit-results
           SUMMARY="audit-results/summary.md"
+          code="${{ steps.corecheck.outputs.exit_code || 'n/a' }}"
+          label="UNKNOWN"
+          case "$code" in
+            0) label="PASS" ;;
+            1) label="GATE_FAIL" ;;
+            2) label="CONFIG" ;;
+            3) label="NETWORK" ;;
+            4) label="ENGINE" ;;
+          esac
           {
             echo "## CoreCheck DAST Quality Gate"
             echo
+            echo "- **Mode:** \`${{ steps.policy.outputs.mode }}\`"
             echo "- **Event:** \`${{ github.event_name }}\`"
             echo "- **Target:** \`${{ steps.policy.outputs.target_url }}\`"
             echo "- **Fail-on:** \`${{ steps.policy.outputs.fail_on }}\`"
-            echo "- **Gate exit code:** \`${{ steps.corecheck.outputs.exit_code || 'n/a' }}\`"
+            echo "- **Gate exit code:** \`${code}\` (${label})"
+            echo "- **Artifacts:** \`${{ steps.artifacts.outputs.artifacts_ok || 'n/a' }}\`"
             echo
           } > "$SUMMARY"
 
@@ -130,7 +181,7 @@ jobs:
         with:
           name: corecheck-audit-results
           path: ./audit-results
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload SARIF to Code Scanning
         if: always() && hashFiles('audit-results/results.sarif') != ''
@@ -140,8 +191,10 @@ jobs:
           sarif_file: ./audit-results/results.sarif
           category: corecheck
 
+      # continue-on-error: permisos de PR comment no deben tumbar el gate.
       - name: Comment Markdown report on PR
         if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: corecheck-audit-report
@@ -150,18 +203,35 @@ jobs:
       - name: Enforce Quality Gate Exit Code
         if: always()
         run: |
+          set -euo pipefail
           code="${{ steps.corecheck.outputs.exit_code }}"
           if [ -z "$code" ]; then
-            echo "CoreCheck step did not produce an exit code"
-            exit 1
+            echo "::error::CoreCheck step did not produce an exit code"
+            exit 4
           fi
-          # Soft-warn only for CLI crashes (2) vs gate fail (1) messaging.
-          if [ "$code" = "2" ]; then
-            echo "License/module configuration failure (exit 2)"
-            exit 2
-          fi
-          if [ "$code" != "0" ]; then
-            echo "Quality gate failed with exit code ${code} (fail-on=${{ steps.policy.outputs.fail_on }})"
-            exit "$code"
-          fi
-          echo "Quality gate passed (fail-on=${{ steps.policy.outputs.fail_on }})"
+
+          case "$code" in
+            0)
+              echo "Quality gate PASSED (exit 0)"
+              ;;
+            1)
+              echo "::error::Quality GATE_FAIL (exit 1) fail-on=${{ steps.policy.outputs.fail_on }}"
+              exit 1
+              ;;
+            2)
+              echo "::error::CONFIG/license failure (exit 2)"
+              exit 2
+              ;;
+            3)
+              echo "::error::NETWORK/target unreachable (exit 3)"
+              exit 3
+              ;;
+            4)
+              echo "::error::ENGINE/Playwright failure (exit 4)"
+              exit 4
+              ;;
+            *)
+              echo "::error::Unexpected CoreCheck exit code ${code}"
+              exit "$code"
+              ;;
+          esac

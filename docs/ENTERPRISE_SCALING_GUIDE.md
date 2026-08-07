@@ -12,8 +12,9 @@
 | Regla | Comando / evidencia | Criterio de aceptación |
 | :--- | :--- | :--- |
 | **0 errores TypeScript** | `npm run typecheck` | Exit code `0`, sin warnings de compilación |
-| **Contratos CLI/SARIF verdes** | `npm test` | Suite de contratos en `test/` en verde |
+| **Suite endurecida verde** | `npm test` | Contratos + attestation + policy + artefactos + Playwright + ResourceBudget |
 | **Build reproducible** | `npm run build` | Genera `dist/` usable (`node dist/index.js run --help`) |
+| **CI no miente en verde** | Workflows `corecheck-ci.yml` / template cliente | Smoke/artefactos obligatorios; exit 0–4 |
 | **No secrets en git** | Revisión PR | Sin API keys, tokens Jira, `.env` |
 | **Scope freeze v1.0** | Review arquitectónico | Sin features de la lista de denegaciones |
 
