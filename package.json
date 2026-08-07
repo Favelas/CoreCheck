@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsc --noEmit && node --import tsx --test test/cli_contract.test.ts",
+    "test": "tsc --noEmit && node --import tsx --test test/cli_contract.test.ts test/sarif_exporter.test.ts",
     "audit": "tsx src/cli/index.ts",
     "audit:sample": "tsx src/cli/index.ts --url https://example.com --fail-on HIGH --formats json,html,sarif,markdown --output-dir ./audit-results --api-key cc_dev_enterprise_governance",
     "reports:prepare": "tsx scripts/prepare_shared_reports.ts",
