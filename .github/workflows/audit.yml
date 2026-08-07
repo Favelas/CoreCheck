@@ -10,11 +10,17 @@ on:
         required: true
         default: 'https://example.com'
         type: string
+      fail_on:
+        description: 'Severidad mínima para fallar el gate (CRITICAL|HIGH|MEDIUM|LOW|INFO)'
+        required: false
+        default: 'HIGH'
+        type: string
 
 permissions:
   contents: read
-  security-events: write
   pull-requests: write
+  checks: write
+  security-events: write
 
 jobs:
   audit:
@@ -32,24 +38,91 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        # npm ci ejecuta postinstall → playwright install chromium
         run: npm ci
 
       - name: Install Playwright OS dependencies
-        # Librerías del sistema en ubuntu-latest (el browser ya viene del postinstall)
         run: npx playwright install-deps chromium
+
+      - name: Build CoreCheck CLI
+        run: npm run build
+
+      - name: Resolve gate policy
+        id: policy
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR self-check: valida motor + artefactos; no bloquear por hallazgos HIGH de example.com.
+            echo "fail_on=CRITICAL" >> "$GITHUB_OUTPUT"
+            echo "max_pages=3" >> "$GITHUB_OUTPUT"
+            echo "target_url=https://example.com" >> "$GITHUB_OUTPUT"
+          else
+            echo "fail_on=${{ github.event.inputs.fail_on || 'HIGH' }}" >> "$GITHUB_OUTPUT"
+            echo "max_pages=10" >> "$GITHUB_OUTPUT"
+            echo "target_url=${{ github.event.inputs.target_url || 'https://example.com' }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run CoreCheck CLI
         id: corecheck
+        continue-on-error: true
         env:
-          TARGET_URL: ${{ github.event.inputs.target_url || 'https://example.com' }}
+          TARGET_URL: ${{ steps.policy.outputs.target_url }}
+          FAIL_ON: ${{ steps.policy.outputs.fail_on }}
+          MAX_PAGES: ${{ steps.policy.outputs.max_pages }}
+          CORECHECK_API_KEY: ${{ secrets.CORECHECK_API_KEY }}
         run: |
-          npx tsx src/cli/index.ts \
+          set +e
+          mkdir -p audit-results
+          EXTRA_FLAGS=()
+          if [ -z "${CORECHECK_API_KEY}" ]; then
+            EXTRA_FLAGS+=(--skip-license)
+            echo "::warning::CORECHECK_API_KEY secret not set; running with --skip-license"
+          fi
+
+          echo "Target=${TARGET_URL} fail-on=${FAIL_ON} max-pages=${MAX_PAGES}"
+
+          node dist/index.js run \
             --url "$TARGET_URL" \
-            --fail-on HIGH \
-            --formats json,sarif,html,markdown \
+            --fail-on "$FAIL_ON" \
+            --max-pages "$MAX_PAGES" \
+            --formats json,sarif,html,markdown,pdf \
             --output-dir ./audit-results \
-            --flat-output
+            --flat-output \
+            --environment staging \
+            "${EXTRA_FLAGS[@]}"
+          code=$?
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          # Preserve gate semantics for the final job conclusion below.
+          exit 0
+
+      - name: Build PR Markdown Summary
+        if: always()
+        run: |
+          mkdir -p audit-results
+          SUMMARY="audit-results/summary.md"
+          {
+            echo "## CoreCheck DAST Quality Gate"
+            echo
+            echo "- **Event:** \`${{ github.event_name }}\`"
+            echo "- **Target:** \`${{ steps.policy.outputs.target_url }}\`"
+            echo "- **Fail-on:** \`${{ steps.policy.outputs.fail_on }}\`"
+            echo "- **Gate exit code:** \`${{ steps.corecheck.outputs.exit_code || 'n/a' }}\`"
+            echo
+          } > "$SUMMARY"
+
+          if [ -f audit-results/report.md ]; then
+            echo "### Full Markdown Report" >> "$SUMMARY"
+            echo >> "$SUMMARY"
+            cat audit-results/report.md >> "$SUMMARY"
+          elif [ -f audit-results/findings.json ]; then
+            echo "### Findings summary" >> "$SUMMARY"
+            echo >> "$SUMMARY"
+            echo '```text' >> "$SUMMARY"
+            node --input-type=module -e "import fs from 'node:fs'; const f=JSON.parse(fs.readFileSync('./audit-results/findings.json','utf8')); console.log('target:', f.target); console.log('score:', f.digitalQualityScore); console.log('gateFailed:', f.gateFailed); console.log('findings:', (f.findings||[]).length);" >> "$SUMMARY"
+            echo '```' >> "$SUMMARY"
+          else
+            echo "### Note" >> "$SUMMARY"
+            echo >> "$SUMMARY"
+            echo "Audit artifacts were not generated. Inspect the CoreCheck CLI step logs." >> "$SUMMARY"
+          fi
 
       - name: Upload audit artifacts
         if: always()
@@ -60,7 +133,8 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload SARIF to Code Scanning
-        if: always()
+        if: always() && hashFiles('audit-results/results.sarif') != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: ./audit-results/results.sarif
@@ -71,4 +145,23 @@ jobs:
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: corecheck-audit-report
-          path: ./audit-results/report.md
+          path: ./audit-results/summary.md
+
+      - name: Enforce Quality Gate Exit Code
+        if: always()
+        run: |
+          code="${{ steps.corecheck.outputs.exit_code }}"
+          if [ -z "$code" ]; then
+            echo "CoreCheck step did not produce an exit code"
+            exit 1
+          fi
+          # Soft-warn only for CLI crashes (2) vs gate fail (1) messaging.
+          if [ "$code" = "2" ]; then
+            echo "License/module configuration failure (exit 2)"
+            exit 2
+          fi
+          if [ "$code" != "0" ]; then
+            echo "Quality gate failed with exit code ${code} (fail-on=${{ steps.policy.outputs.fail_on }})"
+            exit "$code"
+          fi
+          echo "Quality gate passed (fail-on=${{ steps.policy.outputs.fail_on }})"

@@ -17,7 +17,37 @@ function mapSeverityToSarifLevel(severity: SeverityLevel): 'error' | 'warning' |
   }
 }
 
-function mapSeverityToSecuritySeverity(severity: SeverityLevel): string {
+/**
+ * GitHub Code Scanning exige `security-severity` como número (0.0–10.0),
+ * no como etiqueta cualitativa ("medium"). Preferimos CVSS baseScore cuando existe.
+ * @see https://docs.github.com/en/code-security/code-scanning/integrating-with-code-scanning/sarif-support-for-code-scanning
+ */
+function mapSeverityToSecuritySeverityScore(
+  severity: SeverityLevel,
+  cvssBaseScore?: number
+): string {
+  if (typeof cvssBaseScore === 'number' && Number.isFinite(cvssBaseScore)) {
+    const clamped = Math.min(10, Math.max(0, cvssBaseScore));
+    return clamped.toFixed(1);
+  }
+
+  switch (severity) {
+    case 'CRITICAL':
+      return '9.5';
+    case 'HIGH':
+      return '8.0';
+    case 'MEDIUM':
+      return '5.0';
+    case 'LOW':
+      return '3.0';
+    case 'INFO':
+    default:
+      return '0.0';
+  }
+}
+
+/** Etiqueta cualitativa para tags / UI — nunca en `security-severity`. */
+function mapSeverityToQualitativeLabel(severity: SeverityLevel): string {
   switch (severity) {
     case 'CRITICAL':
       return 'critical';
@@ -32,9 +62,25 @@ function mapSeverityToSecuritySeverity(severity: SeverityLevel): string {
   }
 }
 
+/** `properties.problem.severity` SARIF/GitHub: error | warning | recommendation. */
+function mapProblemSeverity(
+  severity: SeverityLevel
+): 'error' | 'warning' | 'recommendation' {
+  switch (severity) {
+    case 'CRITICAL':
+    case 'HIGH':
+      return 'error';
+    case 'MEDIUM':
+      return 'warning';
+    default:
+      return 'recommendation';
+  }
+}
+
 function buildTags(finding: AuditFinding): string[] {
   const tags = new Set<string>();
   tags.add('corecheck');
+  tags.add(`severity/${mapSeverityToQualitativeLabel(finding.severity)}`);
   if (finding.category) tags.add(finding.category.toLowerCase());
   if (finding.ruleType) tags.add(finding.ruleType.toLowerCase());
   for (const t of finding.standards.owasp ?? []) tags.add(t);
@@ -182,9 +228,12 @@ export async function exportToSarif(
       properties: {
         tags: buildTags(finding),
         precision: finding.confidence === 'HIGH' ? 'very-high' : 'high',
-        'security-severity': mapSeverityToSecuritySeverity(finding.severity),
+        'security-severity': mapSeverityToSecuritySeverityScore(
+          finding.severity,
+          finding.cvss?.baseScore
+        ),
         problem: {
-          severity: mapSeverityToSecuritySeverity(finding.severity)
+          severity: mapProblemSeverity(finding.severity)
         }
       }
     };
@@ -228,7 +277,11 @@ export async function exportToSarif(
               ruleType: finding.ruleType,
               confidence: finding.confidence,
               revalidated: finding.revalidated ?? false,
-              'security-severity': mapSeverityToSecuritySeverity(finding.severity),
+              'security-severity': mapSeverityToSecuritySeverityScore(
+                finding.severity,
+                finding.cvss?.baseScore
+              ),
+              severityLabel: mapSeverityToQualitativeLabel(finding.severity),
               cvss: finding.cvss,
               evidence: finding.evidence,
               remediation: finding.remediation,
