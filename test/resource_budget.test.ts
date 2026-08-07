@@ -94,4 +94,24 @@ describe('resource_budget.clampConcurrency', () => {
     assert.ok(args.includes('--disable-dev-shm-usage'));
     assert.ok(args.includes('--no-sandbox'));
   });
+
+  it('forces concurrency=1 when highPressure or high DOM density', () => {
+    const byDom = clampConcurrency({
+      requestedConcurrency: 5,
+      forceCiProfile: false,
+      totalMemBytes: 32 * GB,
+      freeMemBytes: 24 * GB,
+      domDensity: 'high'
+    });
+    assert.equal(byDom.concurrency, 1);
+
+    const byPressure = clampConcurrency({
+      requestedConcurrency: 5,
+      forceCiProfile: false,
+      totalMemBytes: 32 * GB,
+      freeMemBytes: 24 * GB,
+      highPressure: true
+    });
+    assert.equal(byPressure.concurrency, 1);
+  });
 });

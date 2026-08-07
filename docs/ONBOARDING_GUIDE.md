@@ -30,7 +30,7 @@ Antes de tocar código, confirma con el cliente estos puntos. Márcalos juntos e
 | 3 | Permiso para crear **Secrets** del repositorio | ☐ | Settings → Secrets |
 | 4 | **URL objetivo** estable para el primer escaneo | ☐ | Staging o preview (recomendado) |
 | 5 | La URL responde **HTTP 200** (no 404) en el navegador | ☐ | Verificar a mano antes del PR |
-| 6 | ¿La app está detrás de login? | ☐ | Si sí: planificar auth (v1.0 limitado; ver guía Enterprise) |
+| 6 | ¿La app está detrás de login? | ☐ | Si sí: usar `--auth-state` (storageState). **MFA no está en v1.0** — ver Enterprise §4.1 |
 | 7 | ¿Hay WAF / bot protection (Cloudflare, Akamai…)? | ☐ | Puede devolver 403/429 al crawler |
 | 8 | Contacto técnico para el primer PR de prueba | ☐ | Quien abrirá el PR |
 

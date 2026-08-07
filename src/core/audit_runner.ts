@@ -27,6 +27,11 @@ import {
   chromiumLaunchArgsForBudget,
   clampConcurrency
 } from '../utils/resource_budget.js';
+import {
+  formatWafNetworkMessage,
+  isRetryableStatus,
+  withExponentialBackoff
+} from '../utils/http_retry.js';
 import { AuthHandler } from './auth_handler.js';
 import { SiteCrawler } from './crawler.js';
 import { ZeroFPEngine } from './zero_fp_engine.js';
@@ -164,7 +169,23 @@ export class AuditRunner {
       console.log(`[Crawler] Páginas a auditar (${scannedPages.length}):`);
       scannedPages.forEach((url, index) => console.log(`  ${index + 1}. ${url}`));
 
-      const concurrency = Math.max(1, Math.floor(this.options.concurrency) || 1);
+      // Re-evaluar presupuesto si el DOM del landing es denso (SPA/pesada).
+      const domDensity = await this.probeDomDensity(crawlPage);
+      let concurrency = Math.max(1, Math.floor(this.options.concurrency) || 1);
+      if (domDensity === 'high') {
+        const adjusted = clampConcurrency({
+          requestedConcurrency: concurrency,
+          activeFuzzing: this.options.activeFuzzing,
+          domDensity: 'high'
+        });
+        if (adjusted.capped || adjusted.concurrency < concurrency) {
+          console.warn(
+            `[ResourceBudget] High DOM density detected — concurrency ${concurrency} → ${adjusted.concurrency}`
+          );
+        }
+        concurrency = adjusted.concurrency;
+      }
+
       const artifactsDir = path.join(baseDir, 'artifacts');
       console.log(
         `[Audit] Escaneo de páginas con concurrency=${concurrency}` +
@@ -247,35 +268,87 @@ export class AuditRunner {
     privacyInspector.attach(pageUrl);
 
     let navigationSuccess = false;
-    let attempt = 0;
+    let attemptMeta = { attempts: 0, lastStatus: undefined as number | undefined };
     let mainResponse: Response | null = null;
 
-    while (attempt <= this.options.maxRetries && !navigationSuccess) {
-      try {
-        attempt++;
-        mainResponse = await page.goto(pageUrl, {
-          waitUntil: 'commit',
-          timeout: this.options.timeoutMs
-        });
-
-        await page.waitForFunction(
-          () => {
-            const hasInteractiveElements =
-              document.querySelectorAll('input, button, form, a, textarea').length > 0;
-            const bodyLength = document.body ? document.body.innerText.trim().length : 0;
-            return hasInteractiveElements || bodyLength > 30;
-          },
-          { timeout: this.options.timeoutMs }
-        );
-
-        navigationSuccess = true;
-      } catch (error) {
-        if (attempt > this.options.maxRetries) {
-          console.error(`[CRITICAL] Error al renderizar ${pageUrl}: ${(error as Error).message}`);
-        } else {
-          await new Promise((res) => setTimeout(res, 2000));
+    try {
+      const navOutcome = await withExponentialBackoff(
+        async () => {
+          const response = await page.goto(pageUrl, {
+            waitUntil: 'commit',
+            timeout: this.options.timeoutMs
+          });
+          await page.waitForFunction(
+            () => {
+              const hasInteractiveElements =
+                document.querySelectorAll('input, button, form, a, textarea').length > 0;
+              const bodyLength = document.body ? document.body.innerText.trim().length : 0;
+              return hasInteractiveElements || bodyLength > 30;
+            },
+            { timeout: this.options.timeoutMs }
+          );
+          return response;
+        },
+        (response) => response?.status(),
+        {
+          maxAttempts: Math.max(2, this.options.maxRetries + 1),
+          baseDelayMs: 400,
+          maxDelayMs: 8_000,
+          onRetry: ({ attempt, status, delayMs }) => {
+            console.warn(
+              `[Audit] Retry nav ${attempt} ${pageUrl} (HTTP ${status ?? 'n/a'}) — backoff ${delayMs}ms`
+            );
+          }
         }
+      );
+      mainResponse = navOutcome.value;
+      attemptMeta = {
+        attempts: navOutcome.attempts,
+        lastStatus: navOutcome.lastStatus
+      };
+      if (isRetryableStatus(navOutcome.lastStatus)) {
+        const msg = formatWafNetworkMessage(
+          navOutcome.lastStatus!,
+          pageUrl,
+          navOutcome.attempts
+        );
+        // Landing/target principal → fail-closed NETWORK (exit 3).
+        // Subpáginas → hallazgo INFRA sin tumbar toda la corrida.
+        if (captureLandingScreenshot) {
+          throw new CoreCheckError(msg, 'NETWORK');
+        }
+        findings.push({
+          id: `WAF-${Date.now()}`,
+          ruleId: 'INFRA-WAF-RATE-LIMIT',
+          title: 'WAF / Rate-limit bloqueó la navegación',
+          severity: 'HIGH',
+          category: 'INFRA',
+          ruleType: 'INFRA_FAILURE',
+          description: msg,
+          evidence: {
+            url: pageUrl,
+            responseStatus: navOutcome.lastStatus,
+            snippet: msg.slice(0, 512)
+          },
+          remediation: {
+            explanation:
+              'Allowlist de runners CI, reducir ritmo de crawl o auditar staging sin bot protection.',
+            codeBefore: '// 403/429 persistente',
+            codeAfter: '// backoff + allowlist + staging interno'
+          },
+          standards: {
+            owasp: ['A05:2021-Security Misconfiguration'],
+            cwe: ['CWE-400']
+          }
+        });
+        return findings;
       }
+      navigationSuccess = true;
+    } catch (error) {
+      if (error instanceof CoreCheckError) {
+        throw error;
+      }
+      console.error(`[CRITICAL] Error al renderizar ${pageUrl}: ${(error as Error).message}`);
     }
 
     if (!navigationSuccess) {
@@ -284,16 +357,22 @@ export class AuditRunner {
         ruleId: 'SEC-NAV-RENDER-FAILED',
         title: 'Fallo Crítico en la Carga y Renderizado de la Aplicación Target',
         severity: 'CRITICAL',
-        description: `La aplicación en '${pageUrl}' no se renderizó dentro del tiempo límite (${this.options.timeoutMs}ms).`,
+        category: 'INFRA',
+        ruleType: 'INFRA_FAILURE',
+        description:
+          `La aplicación en '${pageUrl}' no se renderizó dentro del tiempo límite (${this.options.timeoutMs}ms)` +
+          (attemptMeta.lastStatus ? ` (last HTTP ${attemptMeta.lastStatus})` : '') +
+          `.`,
         evidence: {
           url: pageUrl,
+          responseStatus: attemptMeta.lastStatus,
           snippet: await page.content().catch(() => 'Sin contenido DOM')
         },
         remediation: {
           explanation:
-            'Verifique que el servidor de la aplicación responda correctamente y no bloquee automatizaciones.',
+            'Verifique que el servidor responda, no bloquee automatizaciones (WAF) y optimice el render inicial.',
           codeBefore: '// Timeout en tiempo de carga',
-          codeAfter: '// Optimizar la entrega de recursos e infraestructura del frontend'
+          codeAfter: '// Optimizar entrega de recursos + allowlist runners CI'
         },
         standards: {
           owasp: ['A05:2021-Security Misconfiguration'],
@@ -438,6 +517,18 @@ export class AuditRunner {
     });
 
     return findings;
+  }
+
+  private async probeDomDensity(
+    page: import('playwright').Page
+  ): Promise<'normal' | 'high'> {
+    try {
+      const count = await page.evaluate(() => document.querySelectorAll('*').length);
+      // Umbral conservador: DOMs densos (SPA/tablas masivas) fuerzan serialización.
+      return count >= 2_500 ? 'high' : 'normal';
+    } catch {
+      return 'normal';
+    }
   }
 
   /** Hallazgo explícito cuando un inspector falla — evita degradación silenciosa. */

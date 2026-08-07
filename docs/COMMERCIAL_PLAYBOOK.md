@@ -19,11 +19,11 @@
 
 ### No — fuera de alcance v1.0 (no prometer)
 
-- MFA / Captcha / SSO interactivo SAML-OIDC
+- MFA / Captcha / SSO interactivo SAML-OIDC — **pendiente a propósito** (ver [ENTERPRISE §4.1](./ENTERPRISE_SCALING_GUIDE.md)): CI no-determinista + riesgo de secrets 2FA; usar `--auth-state` post-login humano
 - Dashboard SaaS multi-tenant
 - DAST ofensivo profundo / pentest sustituto
 - Marketplace Action oficial (roadmap v1.1)
-- Apps SPA sin enlaces `<a href>` descubribles (cobertura limitada)
+- Apps SPA sin ningún ancla descubrible y sin `data-*` / hash routes (cobertura limitada)
 
 Script de objeción: *“CoreCheck es el Quality Gate unificado de release; no reemplaza un pentest ni un IdP. Cubre el 80% del ruido de calidad digital en cada PR.”*
 

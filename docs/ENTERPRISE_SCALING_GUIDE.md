@@ -135,17 +135,43 @@ Cualquier cambio en precedencia de flags (`--out`, `--formats`) o en SARIF **deb
 > Activar construcción de v1.1 solo con **3+ clientes bajo contrato**.  
 > Hasta entonces: estabilizar onboarding, baselines y reportes.
 
-### 4.1 Auth avanzada (Auth Recipes)
+### 4.1 Auth avanzada (Auth Recipes) — MFA pendiente a propósito
 
 **Objetivo v1.1:** auditar zonas autenticadas sin reinventar el crawler.
 
-Pautas arquitectónicas:
+#### Por qué MFA / Captcha / SSO interactivo NO van en v1.0
+
+| Motivo | Detalle técnico / de producto |
+| :--- | :--- |
+| **Scope freeze** | v1.0 se congela como Quality Gate de staging/CI; MFA es superficie de identidad, no de calidad digital del render público. |
+| **No determinismo en CI** | TOTP/SMS/push/WebAuthn requieren secretos rotativos, dispositivos o intervención humana — rompe runners efímeros y el SLA de exit codes. |
+| **Riesgo de seguridad del cliente** | Automatizar bypass de MFA/Captcha en CI induciría anti-patrones (secrets de 2FA en Actions, disable MFA en staging “para el scanner”). |
+| **Falsos negativos / flakiness** | Flujos MFA cambian por vendor (Okta, Azure AD, Duo, Cloudflare Turnstile); un “login mágico” frágil tumbaría gates sin señal de calidad real. |
+| **Mitigación ya soportada** | `--auth-state` (Playwright `storageState` exportado **después** de un login humano) + `--auth-header` Bearer cubren el 90% de audits autenticados sin tocar MFA. |
+
+**Workaround v1.0 (recomendado a clientes con MFA):**
+
+1. Login manual (o script one-shot fuera de CI) en staging.
+2. Exportar `storageState` de Playwright.
+3. Guardar el JSON como GitHub Secret / artifact efímero.
+4. Ejecutar: `corecheck run --url … --auth-state ./auth.json --fail-on HIGH`.
+
+**Qué sí incluye v1.0 hoy:**
+
+- `storageState` Playwright (`--auth-state`)
+- Form login heurístico (`--auth-login-url` + user/pass) — parcial; fall-closed si falla
+- Header injection (`--auth-header`)
+
+**Qué queda explícitamente en v1.1+ (Auth Recipes):** MFA/TOTP recipes, Captcha hand-off, SSO/SAML/OIDC interactivo — solo post-revenue y con diseño de vault + recetas versionadas.
+
+Pautas arquitectónicas (cuando se abra v1.1):
 
 1. Mantener `AuthHandler` como único punto de sesión.
 2. Recetas versionadas, por ejemplo:
    - `storageState` Playwright exportado (`--auth-state`)
    - Form login (`--auth-login-url` + user/pass) — ya parcialmente en v1.0
    - Header injection (`--auth-header`) — ya en v1.0
+   - `mfa_totp.ts` / `sso_oidc.ts` — **no antes de v1.1**
 3. Guardar secrets solo en GitHub Secrets / vault del cliente.
 4. Prohibir cookies/tokens en el repo o en findings (redact en evidencia).
 
@@ -156,6 +182,8 @@ src/auth/recipes/
   form_login.ts
   storage_state.ts
   header_bearer.ts
+  mfa_totp.ts          # v1.1+
+  sso_oidc.ts          # v1.1+
 ```
 
 ### 4.2 Empaquetar como GitHub Action oficial (`corecheck/action@v1`)

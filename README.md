@@ -158,7 +158,7 @@ Este repositorio incluye:
 | :--- | :--- |
 | `npm run typecheck` | TypeScript sin emitir (`tsc --noEmit`) — **0 errores obligatorio** |
 | `npm run build` | Compila a `dist/` |
-| `npm test` | typecheck + contratos CLI/SARIF + exit codes + attestation + policy + artefactos + Playwright cleanup |
+| `npm test` | typecheck + suite endurecida (SARIF, attestation, policy, artefactos, Playwright, ResourceBudget, WAF retry, E2E matrix) |
 | `npm run audit` | Lanza la CLI vía `tsx` (pasa flags después de `--`) |
 | `npm run reports:prepare` | Prepara carpetas `shared_reports` para Vercel |
 
@@ -166,9 +166,10 @@ Este repositorio incluye:
 
 ## Alcance v1.0 (congelado)
 
-**Incluido hoy:** Quality Gate unificado, deduplicación site-level, attestation + `verify`, exit codes 0–4, INFRA_FAILURE, CI duro, ResourceBudget (cap concurrencia), SARIF, ticketing HTTP, webhooks HMAC, INP, `/llm.txt`.
+**Incluido hoy:** Quality Gate unificado, deduplicación site-level, attestation + `verify`, exit codes 0–4, INFRA_FAILURE, CI duro, ResourceBudget, SARIF 2.1.0 validado, SPA crawl acotado, WAF backoff (403/429/503 → exit 3), E2E matrix, ticketing HTTP, webhooks HMAC, INP, `/llm.txt`.
 
-**Fuera de alcance (post-revenue / v1.1+):** Dashboard SaaS multi-tenant, SSO/SAML, DAST ofensivo profundo, Action oficial de Marketplace (planificado). Detalle en [ENTERPRISE_SCALING_GUIDE](docs/ENTERPRISE_SCALING_GUIDE.md).
+**Fuera de alcance (post-revenue / v1.1+):** MFA/TOTP/Captcha interactivo, Dashboard SaaS multi-tenant, SSO/SAML, DAST ofensivo profundo, Action oficial de Marketplace.  
+**Por qué MFA queda pendiente:** no es determinista en CI, induciría anti-patrones de seguridad (secrets 2FA en runners) y el workaround `--auth-state` ya cubre audits autenticados. Detalle en [ENTERPRISE_SCALING_GUIDE §4.1](docs/ENTERPRISE_SCALING_GUIDE.md).
 
 ### Runners CI (memoria)
 

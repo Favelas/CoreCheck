@@ -13,6 +13,10 @@ import {
 import { sanitizeAndBudgetEvidence } from '../src/utils/evidence.ts';
 import { exportToSarif } from '../src/utils/sarif_exporter.ts';
 import { getPackageVersion } from '../src/utils/package_version.ts';
+import {
+  SARIF_2_1_SCHEMA_URI,
+  validateSarifDocument
+} from '../src/utils/sarif_schema.ts';
 import { sampleBundle, sampleFinding } from './helpers/fixtures.ts';
 
 describe('artifact resilience', () => {
@@ -82,11 +86,21 @@ describe('artifact resilience', () => {
 
     const sarif = JSON.parse(await fs.readFile(sarifPath, 'utf8')) as {
       version: string;
+      $schema: string;
       runs: Array<{ tool: { driver: { version: string } }; results: unknown[] }>;
     };
     assert.equal(sarif.version, '2.1.0');
     assert.equal(sarif.runs[0].tool.driver.version, getPackageVersion());
     assert.ok(sarif.runs[0].results.length >= 1);
+
+    const schemaCheck = validateSarifDocument(sarif);
+    assert.equal(
+      schemaCheck.ok,
+      true,
+      schemaCheck.issues.map((i) => `${i.path}: ${i.message}`).join('\n')
+    );
+    assert.ok(sarif.$schema.includes('sarif-schema-2.1.0'));
+    assert.equal(sarif.$schema, SARIF_2_1_SCHEMA_URI);
 
     const pdf = await fs.readFile(pdfPath);
     assert.equal(pdf.subarray(0, 4).toString('utf8'), '%PDF');
@@ -117,6 +131,8 @@ describe('artifact resilience', () => {
       runs: Array<{ results: unknown[] }>;
     };
     assert.deepEqual(sarif.runs[0].results, []);
+    const emptyCheck = validateSarifDocument(sarif);
+    assert.equal(emptyCheck.ok, true, JSON.stringify(emptyCheck.issues));
 
     const htmlStat = await fs.stat(htmlPath);
     assert.ok(htmlStat.size > 64);

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 
 import { AuditFinding, AuditReportBundle, SeverityLevel } from '../types/audit.js';
 import { getPackageVersion } from './package_version.js';
+import { assertValidSarifDocument } from './sarif_schema.js';
 
 function mapSeverityToSarifLevel(severity: SeverityLevel): 'error' | 'warning' | 'note' {
   switch (severity) {
@@ -328,6 +329,9 @@ export async function exportToSarif(
       }
     ]
   };
+
+  // OASIS 2.1.0 + GitHub Code Scanning contract — fail closed before writing corrupt artifacts.
+  assertValidSarifDocument(sarifLog);
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, JSON.stringify(sarifLog, null, 2), 'utf-8');

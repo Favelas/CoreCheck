@@ -18,6 +18,13 @@ export interface ResourceBudgetInput {
   freeMemBytes?: number;
   /** Fuerza perfil CI. Default: detecta GITHUB_ACTIONS / CI. */
   forceCiProfile?: boolean;
+  /**
+   * Densidad DOM / presión observada en el target.
+   * `high` fuerza concurrency=1 (apps pesadas / SPA densas).
+   */
+  domDensity?: 'normal' | 'high';
+  /** Señal de presión CPU/memoria en runtime (tests o probes). */
+  highPressure?: boolean;
 }
 
 export interface ResourceBudgetResult {
@@ -85,15 +92,28 @@ export function clampConcurrency(input: ResourceBudgetInput): ResourceBudgetResu
   }
 
   const effectiveCap = Math.min(hardCap, memBasedCap, ABSOLUTE_HARD_CAP);
-  const concurrency = Math.min(requested, effectiveCap);
+  let concurrency = Math.min(requested, effectiveCap);
+
+  const forceSerial =
+    input.domDensity === 'high' ||
+    input.highPressure === true ||
+    freeMem < 2 * 1024 * 1024 * 1024;
+
+  if (forceSerial && concurrency > 1) {
+    concurrency = 1;
+  }
+
   const capped = concurrency < requested;
 
   let reason: string | undefined;
   if (capped) {
+    const pressureNote = forceSerial
+      ? ', serial=1 due to high DOM/CPU/memory pressure'
+      : '';
     reason =
       `Concurrency capped ${requested} → ${concurrency} ` +
       `(profile=${profile}, hardCap=${hardCap}, memCap=${memBasedCap}, ` +
-      `free≈${Math.round(freeMem / (1024 * 1024))}MB)`;
+      `free≈${Math.round(freeMem / (1024 * 1024))}MB${pressureNote})`;
   }
 
   return {
