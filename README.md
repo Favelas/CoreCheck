@@ -1,54 +1,166 @@
-# CoreCheck
+# CoreCheck v1.0
 
-> **The Unified Digital Quality & Security Gate for CI/CD Pipelines**
-> High-precision DAST, WCAG 2.2 AA Accessibility, Core Web Vitals, Privacy, SEO/GEO, and AI-Agent Readiness in a single zero-noise execution.
+**Digital Quality Gate** para pipelines CI/CD: un solo escaneo que combina seguridad (DAST), accesibilidad (WCAG 2.2 AA), rendimiento (Core Web Vitals / INP), privacidad, SEO/GEO y readiness para agentes de IA.
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/License-Proprietary-red?style=flat-square)](#)
-[![Code Scanning](https://img.shields.io/badge/SARIF-2.1.0-green?style=flat-square)](#)
-[![Compliance](https://img.shields.io/badge/Compliance-ISO27001%20%7C%20SOC2%20%7C%20PCI--DSS%20v4.0-blue?style=flat-square)](#)
-
----
-
-## Executive Overview
-
-**CoreCheck** is an enterprise-grade Digital Quality Gate engineered specifically for modern DevSecOps pipelines and Mid-Market engineering teams. Instead of gluing together disparate scanners for security, accessibility, performance, and SEO, CoreCheck executes a unified pass over target Web applications and outputs immediate, actionable, and cryptographically signed audit artifacts.
-
-### Key Capabilities
-
-* **Unified Digital Quality Score (0–100):** Consolidates 6 critical dimensions into a single actionable metric.
-* **Site-Level Deduplication Engine:** Automatically merges repetitive site-wide findings (e.g., missing HTTP security headers or cookie flags) into consolidated entities to eliminate alert fatigue.
-* **Zero-False-Positive Philosophy:** Enforces evidence budgets (2 KB maximum payload per finding) to guarantee actionable bugs over noise.
-* **Cryptographic Attestation:** Signs execution results with HMAC SHA-256 and embeds verification QR codes on PDF executive reports for tamper-proof compliance audits.
-* **Native CI/CD & DevSecOps Ecosystem:** Direct export to SARIF 2.1.0, GitHub Code Scanning, Jira Cloud API v3, Azure Boards, GitLab Issues, and signed webhooks.
-
----
-
-## The 6 Inspection Dimensions
-
-CoreCheck evaluates target environments against six non-overlapping compliance and quality vectors:
-
-| Dimension | Scope & Core Standards Evaluated |
+| | |
 | :--- | :--- |
-| **1. Security (DAST)** | Passive & active attack surface analysis, CORS configurations, CSP parsing, TLS cipher suites, sensitive exposure, HTTP security headers (`SEC-HDR-*`). |
-| **2. Accessibility (A11y)** | Strict WCAG 2.2 Level AA alignment, DOM tree contrast parsing, ARIA landmarks, keyboard navigation pathing, screen-reader compatibility. |
-| **3. Performance** | Core Web Vitals profiling, including Interaction to Next Paint (INP), Largest Contentful Paint (LCP), Cumulative Layout Shift (CLS), and asset optimization. |
-| **4. SEO & GEO** | Canonical tags, structured JSON-LD data, search engine indexing directives, localized geotargeting, and open graph schemas. |
-| **5. Privacy** | Cookie attribute compliance (`SameSite`, `Secure`, `HttpOnly`), third-party tracker enumeration, privacy policy detection, GDPR/CCPA telemetry leaks (`PRIV-*`). |
-| **6. Network & AI Readiness** | HTTP/2 / HTTP/3 protocol negotiation, TLS latency, fallback behaviors, and AI-Agent crawler readiness validation (`/llm.txt`). |
+| **Versión** | 1.0 (Release Candidate / GTM) |
+| **Runtime** | Node.js 20+ · Playwright (Chromium) |
+| **Salidas** | HTML · PDF (attestation) · SARIF 2.1.0 · JSON · Markdown |
+| **Rol típico** | Quality Gate en Pull Requests (GitHub Actions) |
 
 ---
 
-## Installation & Setup
+## ¿Qué problema resuelve?
 
-### Prerequisites
+En lugar de encadenar 4–5 herramientas distintas (seguridad, a11y, performance, SEO), CoreCheck ejecuta **una pasada unificada** sobre la URL objetivo y entrega:
 
-* **Node.js:** `>=18.0.0`
-* **npm / pnpm / yarn**
+1. Un **Score de Calidad Digital (0–100)** accionable para el equipo.
+2. Hallazgos con evidencia acotada (máx. 2 KB) y deduplicación a nivel de sitio.
+3. Artefactos listos para **PR comments**, **Code Scanning** y reportes ejecutivos firmados.
 
-### Global CLI Installation
+---
+
+## Las 6 dimensiones de inspección
+
+| # | Dimensión | Qué valida (resumen) |
+| :---: | :--- | :--- |
+| 1 | **Security (DAST)** | Cabeceras HTTP, CSP/CORS, exposición sensible, formularios |
+| 2 | **Accessibility** | WCAG 2.2 AA (contraste, ARIA, teclado, landmarks) |
+| 3 | **Performance** | INP, LCP, CLS y optimización de assets |
+| 4 | **SEO & GEO** | Canonical, JSON-LD, indexación, Open Graph |
+| 5 | **Privacy** | Cookies (`Secure` / `HttpOnly` / `SameSite`), trackers, política |
+| 6 | **Network & AI** | Protocolos HTTP/2–3 y readiness `/llm.txt` |
+
+---
+
+## Requisitos previos
+
+- **Node.js** 20 o superior (recomendado; compatible ≥18)
+- **npm** (incluido con Node)
+- Acceso de red a la URL a auditar (staging / preview / producción)
+- En CI: runners GitHub Actions con permiso para instalar Chromium (Playwright)
+
+---
+
+## Instalación local
 
 ```bash
-npm install -g @corecheck/cli
-# or via local execution
-npx @corecheck/cli --help
+git clone https://github.com/Favelas/CoreCheck.git
+cd CoreCheck
+npm install          # también instala Chromium vía postinstall
+npm run build        # genera dist/
+npm run typecheck    # debe quedar en 0 errores
+npm test             # contratos CLI + SARIF
+```
+
+---
+
+## Guía rápida del CLI
+
+### Comando canónico
+
+```bash
+node dist/index.js run \
+  --url https://tu-app.example.com \
+  --html --pdf --sarif --json --markdown \
+  --output-dir ./audit-results \
+  --fail-on HIGH \
+  --skip-license
+```
+
+> En producción comercial usa `--api-key` o el secreto `CORECHECK_API_KEY`.  
+> `--skip-license` es solo para desarrollo / demos locales.
+
+### Flags que más usarás (QA Lead)
+
+| Flag | Para qué sirve | Ejemplo |
+| :--- | :--- | :--- |
+| `--url` | URL a auditar (obligatorio) | `--url https://staging.acme.com` |
+| `--fail-on` | Severidad mínima que **rompe** el pipeline | `--fail-on HIGH` |
+| `--formats` | Lista CSV de reportes | `--formats json,html,sarif,pdf` |
+| `--html` / `--pdf` / `--sarif` / `--json` | Atajos de formato | `--html --pdf` |
+| `--output-dir` | Carpeta de salida (con subcarpeta fechada) | `--output-dir ./audit-results` |
+| `--flat-output` | Sin subcarpeta fechada (ideal CI) | `--flat-output` |
+| `--max-pages` | Límite de páginas del crawler | `--max-pages 10` |
+| `--baseline` | Suppressions / excepciones aceptadas | `--baseline .corecheckignore` |
+
+También puedes usar el subcomando explícito: `node dist/index.js run ...` o `npm run audit -- --url ...`.
+
+---
+
+## Reportes generados (qué abrir y para quién)
+
+Por defecto (sin `--flat-output`) los archivos quedan en:
+
+`audit-results/<dominio>_<YYYY-MM-DD_HH-mm-ss>/`
+
+| Archivo | Audiencia | Uso |
+| :--- | :--- | :--- |
+| `report.html` | QA / Engineering | Reporte visual navegable del escaneo |
+| `interactive-dashboard.html` | QA Lead / stakeholders | Dashboard interactivo del Quality Score |
+| `executive-report.pdf` | C-Level / Compliance | PDF ejecutivo con **attestation** (hash/QR) |
+| `results.sarif` | Security / Platform | GitHub Code Scanning |
+| `findings.json` | Automatización | Integraciones, tickets, análisis |
+| `report.md` | Pull Requests | Comentario sticky en el PR |
+
+### Exit codes (Quality Gate)
+
+| Código | Significado |
+| :---: | :--- |
+| `0` | PASS — ningún hallazgo activo ≥ `--fail-on` |
+| `1` | FAIL — hay hallazgos ≥ umbral (o error crítico de ejecución) |
+| `2` | Config / licencia / módulo no permitido |
+
+---
+
+## Integración CI/CD (GitHub Actions)
+
+Este repositorio incluye:
+
+| Workflow | Archivo | Propósito |
+| :--- | :--- | :--- |
+| CoreCheck CI & Quality Gate | [`.github/workflows/corecheck-ci.yml`](.github/workflows/corecheck-ci.yml) | typecheck, build, tests, smoke |
+| CoreCheck Quality Gate (DAST) | [`.github/workflows/audit.yml`](.github/workflows/audit.yml) | auditoría + SARIF + comentario PR |
+
+**Para onboarding de un cliente nuevo**, sigue la guía paso a paso:
+
+→ **[docs/ONBOARDING_GUIDE.md](docs/ONBOARDING_GUIDE.md)**
+
+---
+
+## Documentación
+
+| Documento | Contenido |
+| :--- | :--- |
+| [Onboarding de clientes](docs/ONBOARDING_GUIDE.md) | 5 fases para activar CoreCheck en un repo cliente |
+| [Escalabilidad Enterprise](docs/ENTERPRISE_SCALING_GUIDE.md) | DoD interno, baselines, roadmap v1.1 |
+| [Arquitectura](docs/ARCHITECTURE.md) | Diagrama del motor (CLI → inspectors → exporters) |
+| [Contributing](docs/CONTRIBUTING.md) | Reglas para contribuidores internos |
+| [Índice docs](docs/README.md) | Mapa de toda la documentación |
+
+---
+
+## Scripts npm útiles
+
+| Script | Descripción |
+| :--- | :--- |
+| `npm run typecheck` | TypeScript sin emitir (`tsc --noEmit`) — **0 errores obligatorio** |
+| `npm run build` | Compila a `dist/` |
+| `npm test` | typecheck + contratos CLI/SARIF |
+| `npm run audit` | Lanza la CLI vía `tsx` (pasa flags después de `--`) |
+| `npm run reports:prepare` | Prepara carpetas `shared_reports` para Vercel |
+
+---
+
+## Alcance v1.0 (congelado)
+
+**Incluido hoy:** Quality Gate unificado, deduplicación site-level, attestation, SARIF, ticketing HTTP (Jira/Azure/GitLab), webhooks HMAC, INP, `/llm.txt`.
+
+**Fuera de alcance (post-revenue / v1.1+):** Dashboard SaaS multi-tenant, SSO/SAML, DAST ofensivo profundo, Action oficial de Marketplace (planificado). Detalle en [ENTERPRISE_SCALING_GUIDE](docs/ENTERPRISE_SCALING_GUIDE.md).
+
+---
+
+## Licencia
+
+Uso propietario — CoreCheck v1.0. Contactar al equipo comercial para API keys y planes.
