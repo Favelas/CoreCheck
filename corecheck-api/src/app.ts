@@ -9,15 +9,18 @@ import {
   parseApiKeyBindingsFromEnv,
   type ApiKeyBinding
 } from './security/apiKeys';
+import { createReportsRepositoryFromEnv } from './store/createRepository';
+import { setReportsRepository } from './store/repository.context';
+import type { ReportsRepository } from './store/reports.repository';
 
 export interface CreateAppOptions {
-  /** Bindings key → accountId (preferido, Fase 1.2). */
   readonly apiKeyBindings?: readonly ApiKeyBinding[];
-  /**
-   * Compat Fase 1.1: lista de keys → todas mapean a tenant_default.
-   * Ignorado si apiKeyBindings está definido.
-   */
   readonly apiKeys?: readonly string[];
+  /** Inyectar repositorio (tests = memory; prod = file/postgres). */
+  readonly repository?: ReportsRepository;
+  /** Si no hay repository, fuerza modo memory|file. */
+  readonly persistence?: 'memory' | 'file';
+  readonly dataDir?: string;
 }
 
 function resolveBindings(options: CreateAppOptions): ApiKeyBinding[] {
@@ -31,12 +34,21 @@ function resolveBindings(options: CreateAppOptions): ApiKeyBinding[] {
 }
 
 /**
- * Factory Express: /api/* autenticado + aislado por accountId.
- * GET / health público.
+ * Factory Express: auth + tenant + repository DI.
  */
 export function createApp(options: CreateAppOptions = {}): Express {
   const app = express();
   const bindings = resolveBindings(options);
+
+  const repository =
+    options.repository ??
+    createReportsRepositoryFromEnv({
+      ...(options.persistence !== undefined
+        ? { mode: options.persistence }
+        : {}),
+      ...(options.dataDir !== undefined ? { dataDir: options.dataDir } : {})
+    });
+  setReportsRepository(repository);
 
   app.use(express.json({ limit: '1mb' }));
 

@@ -9,11 +9,17 @@ import {
   resolveReportHmacSecret,
   sealReportIntegrity
 } from '../security/reportIntegrity';
+import type {
+  ReportsRepository,
+  ReportsRepositoryTestHooks
+} from './reports.repository';
 
 /**
- * Persistencia en memoria con aislamiento por accountId + sello de integridad.
+ * Persistencia en memoria — default para tests (determinista, sin I/O).
  */
-export class ReportsStore {
+export class InMemoryReportsStore
+  implements ReportsRepository, ReportsRepositoryTestHooks
+{
   private _reports: CoreCheckReport[] = [];
 
   saveReport(payload: CreateReportInput, accountId: string): CoreCheckReport {
@@ -60,10 +66,6 @@ export class ReportsStore {
     return report;
   }
 
-  /**
-   * Mutación controlada solo para tests de integridad (no expuesto por HTTP).
-   * Simula tampering at-rest.
-   */
   __dangerouslyReplaceForTests(report: CoreCheckReport): void {
     const idx = this._reports.findIndex((item) => item.id === report.id);
     if (idx >= 0) {
@@ -82,4 +84,8 @@ export class ReportsStore {
   }
 }
 
-export const reportsStore = new ReportsStore();
+/** Singleton de memoria (tests / fallback). */
+export const reportsStore = new InMemoryReportsStore();
+
+/** @deprecated Alias de compat — preferir InMemoryReportsStore. */
+export { InMemoryReportsStore as ReportsStore };

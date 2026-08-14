@@ -4,7 +4,7 @@ import {
   resolveReportHmacSecret,
   verifyReportIntegrity
 } from '../security/reportIntegrity';
-import { reportsStore } from '../store/reports.store';
+import { getReportsRepository } from '../store/repository.context';
 import type { ReportVerifyResponse } from '../types/contracts';
 
 function requireAccountId(req: Request): string {
@@ -28,10 +28,6 @@ function requireReportId(req: Request): string {
   return id;
 }
 
-/**
- * POST /api/reports → 201
- * Requiere req.validatedReport + req.accountId.
- */
 export function createReport(req: Request, res: Response): void {
   if (req.validatedReport === undefined) {
     throw new AppError(
@@ -42,25 +38,23 @@ export function createReport(req: Request, res: Response): void {
   }
 
   const accountId = requireAccountId(req);
-  const report = reportsStore.saveReport(req.validatedReport, accountId);
+  const report = getReportsRepository().saveReport(
+    req.validatedReport,
+    accountId
+  );
   res.status(201).json(report);
 }
 
-/** GET /api/reports → 200 envelope scoped al tenant */
 export function listReports(req: Request, res: Response): void {
   const accountId = requireAccountId(req);
-  res.status(200).json(reportsStore.getAllReports(accountId));
+  res.status(200).json(getReportsRepository().getAllReports(accountId));
 }
 
-/**
- * GET /api/reports/:id → 200 | 404
- * Cross-tenant: mismo mensaje 404 (no revelar existencia en otro account).
- */
 export function getReportById(req: Request, res: Response): void {
   const accountId = requireAccountId(req);
   const id = requireReportId(req);
 
-  const report = reportsStore.getReportById(id, accountId);
+  const report = getReportsRepository().getReportById(id, accountId);
   if (!report) {
     throw new AppError(
       'NOT_FOUND',
@@ -72,15 +66,11 @@ export function getReportById(req: Request, res: Response): void {
   res.status(200).json(report);
 }
 
-/**
- * POST /api/reports/:id/verify → 200
- * Recalcula hash/HMAC; no revela reportes de otros tenants (404).
- */
 export function verifyReport(req: Request, res: Response): void {
   const accountId = requireAccountId(req);
   const id = requireReportId(req);
 
-  const report = reportsStore.getReportById(id, accountId);
+  const report = getReportsRepository().getReportById(id, accountId);
   if (!report) {
     throw new AppError(
       'NOT_FOUND',

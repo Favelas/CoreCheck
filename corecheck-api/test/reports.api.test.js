@@ -257,14 +257,14 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
   });
 
   it('verify detecta tampering at-rest (contentHash mismatch)', async () => {
-    const { reportsStore } = require('../src/store/reports.store');
     const created = await api(server.baseUrl, 'POST', '/api/reports', {
       url: 'https://example.com',
       summary: 'before-tamper'
     });
     assert.equal(created.status, 201);
 
-    reportsStore.__dangerouslyReplaceForTests({
+    const { memoryStore } = require('./helpers/http');
+    memoryStore.__dangerouslyReplaceForTests({
       ...created.json,
       summary: 'tampered-after-seal'
     });

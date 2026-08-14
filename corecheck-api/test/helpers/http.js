@@ -2,7 +2,7 @@
 
 const http = require('http');
 const { createApp } = require('../../src/app');
-const { reportsStore } = require('../../src/store/reports.store');
+const { InMemoryReportsStore } = require('../../src/store/reports.store');
 
 const TEST_API_KEY = 'cc_test_key';
 const TEST_ACCOUNT_ID = 'tenant_default';
@@ -12,10 +12,15 @@ const TENANT_BETA_KEY = 'cc_key_beta';
 const TENANT_ALPHA_ID = 'tenant_alpha';
 const TENANT_BETA_ID = 'tenant_beta';
 
+/** Un store por suite — createApp lo registra vía DI. */
+const memoryStore = new InMemoryReportsStore();
+
 function startTestServer(options = {}) {
+  const repository = options.repository ?? memoryStore;
   const app =
     options.app ??
     createApp({
+      repository,
       apiKeyBindings: [
         { key: TEST_API_KEY, accountId: TEST_ACCOUNT_ID },
         { key: TENANT_ALPHA_KEY, accountId: TENANT_ALPHA_ID },
@@ -30,6 +35,7 @@ function startTestServer(options = {}) {
       resolve({
         baseUrl: `http://127.0.0.1:${port}`,
         apiKey: TEST_API_KEY,
+        repository,
         async close() {
           await new Promise((r) => server.close(r));
         }
@@ -73,7 +79,8 @@ module.exports = {
   TENANT_BETA_KEY,
   TENANT_ALPHA_ID,
   TENANT_BETA_ID,
+  memoryStore,
   startTestServer,
   api,
-  resetStore: () => reportsStore.clear()
+  resetStore: () => memoryStore.clear()
 };

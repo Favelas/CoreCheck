@@ -17,6 +17,9 @@ screenshots/
 # Cache del sistema
 .DS_Store
 
+# CoreCheck API local durable store
+corecheck-api/data/
+
 # Postman local workspace (VS Code / agent) — usar solo *.postman_collection.json
 **/.postman/
 **/postman/**/.resources/
