@@ -5,23 +5,23 @@ import type {
   ReportListEnvelope,
   Vulnerability
 } from '../types/contracts';
+import {
+  resolveReportHmacSecret,
+  sealReportIntegrity
+} from '../security/reportIntegrity';
 
 /**
- * Persistencia en memoria con aislamiento por accountId (Fase 1.2).
+ * Persistencia en memoria con aislamiento por accountId + sello de integridad.
  */
 export class ReportsStore {
   private _reports: CoreCheckReport[] = [];
 
-  /**
-   * Alias enterprise: saveReport(payload, accountId).
-   * El servidor asigna id, createdAt y accountId (no confía en el cliente).
-   */
   saveReport(payload: CreateReportInput, accountId: string): CoreCheckReport {
     return this.create(payload, accountId);
   }
 
   create(payload: CreateReportInput, accountId: string): CoreCheckReport {
-    const report: CoreCheckReport = {
+    const draft = {
       ...payload,
       ...(payload.findings !== undefined
         ? { findings: this.cloneFindings(payload.findings) }
@@ -31,11 +31,11 @@ export class ReportsStore {
       accountId
     };
 
+    const report = sealReportIntegrity(draft, resolveReportHmacSecret());
     this._reports.push(report);
     return report;
   }
 
-  /** Alias: getAllReports(accountId) */
   getAllReports(accountId: string): ReportListEnvelope {
     return this.list(accountId);
   }
@@ -48,7 +48,6 @@ export class ReportsStore {
     };
   }
 
-  /** Alias: getReportById(id, accountId) — sin match de tenant → undefined (404). */
   getReportById(id: string, accountId: string): CoreCheckReport | undefined {
     return this.findById(id, accountId);
   }
@@ -59,6 +58,17 @@ export class ReportsStore {
       return undefined;
     }
     return report;
+  }
+
+  /**
+   * Mutación controlada solo para tests de integridad (no expuesto por HTTP).
+   * Simula tampering at-rest.
+   */
+  __dangerouslyReplaceForTests(report: CoreCheckReport): void {
+    const idx = this._reports.findIndex((item) => item.id === report.id);
+    if (idx >= 0) {
+      this._reports[idx] = report;
+    }
   }
 
   clear(): void {

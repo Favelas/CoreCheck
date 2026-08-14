@@ -25,7 +25,10 @@ export const SENSITIVE_REPORT_FIELD_NAMES: ReadonlySet<string> = new Set(
 export const SERVER_OWNED_FIELD_NAMES: ReadonlySet<string> = new Set([
   'id',
   'createdat',
-  'accountid'
+  'accountid',
+  'contenthash',
+  'integrityalgorithm',
+  'hmacsignature'
 ]);
 
 export function isDeniedIngestField(fieldName: string): boolean {

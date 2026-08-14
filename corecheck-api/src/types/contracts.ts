@@ -41,12 +41,25 @@ export interface CreateReportInput {
 
 /**
  * Representación persistida de un reporte (respuesta 201 / GET by id).
- * El servidor es dueño de id, createdAt y accountId (tenant isolation).
+ * El servidor es dueño de id, createdAt, accountId e integridad.
  */
 export interface CoreCheckReport extends CreateReportInput {
   readonly id: string;
   readonly createdAt: string;
   readonly accountId: string;
+  readonly contentHash: string;
+  readonly integrityAlgorithm: 'SHA-256' | 'HMAC-SHA256';
+  readonly hmacSignature?: string;
+}
+
+/** Respuesta de POST/GET …/verify */
+export interface ReportVerifyResponse {
+  readonly valid: boolean;
+  readonly algorithm: 'SHA-256' | 'HMAC-SHA256';
+  readonly contentHash: string;
+  readonly hashMatches: boolean;
+  readonly hmacVerified: boolean | null;
+  readonly message: string;
 }
 
 /** Envelope de listado — lista vacía es 200, no 404. */

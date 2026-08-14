@@ -1,6 +1,11 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../errors/AppError';
+import {
+  resolveReportHmacSecret,
+  verifyReportIntegrity
+} from '../security/reportIntegrity';
 import { reportsStore } from '../store/reports.store';
+import type { ReportVerifyResponse } from '../types/contracts';
 
 function requireAccountId(req: Request): string {
   const accountId = req.accountId;
@@ -12,6 +17,15 @@ function requireAccountId(req: Request): string {
     );
   }
   return accountId;
+}
+
+function requireReportId(req: Request): string {
+  const rawId = req.params['id'];
+  const id = Array.isArray(rawId) ? rawId[0] : rawId;
+  if (id === undefined || id === '') {
+    throw new AppError('BAD_REQUEST', 'El parámetro id es obligatorio.', 400);
+  }
+  return id;
 }
 
 /**
@@ -44,11 +58,7 @@ export function listReports(req: Request, res: Response): void {
  */
 export function getReportById(req: Request, res: Response): void {
   const accountId = requireAccountId(req);
-  const rawId = req.params['id'];
-  const id = Array.isArray(rawId) ? rawId[0] : rawId;
-  if (id === undefined || id === '') {
-    throw new AppError('BAD_REQUEST', 'El parámetro id es obligatorio.', 400);
-  }
+  const id = requireReportId(req);
 
   const report = reportsStore.getReportById(id, accountId);
   if (!report) {
@@ -60,4 +70,34 @@ export function getReportById(req: Request, res: Response): void {
   }
 
   res.status(200).json(report);
+}
+
+/**
+ * POST /api/reports/:id/verify → 200
+ * Recalcula hash/HMAC; no revela reportes de otros tenants (404).
+ */
+export function verifyReport(req: Request, res: Response): void {
+  const accountId = requireAccountId(req);
+  const id = requireReportId(req);
+
+  const report = reportsStore.getReportById(id, accountId);
+  if (!report) {
+    throw new AppError(
+      'NOT_FOUND',
+      `No existe un reporte con id "${id}".`,
+      404
+    );
+  }
+
+  const verdict = verifyReportIntegrity(report, resolveReportHmacSecret());
+  const body: ReportVerifyResponse = {
+    valid: verdict.valid,
+    algorithm: verdict.algorithm,
+    contentHash: verdict.contentHash,
+    hashMatches: verdict.hashMatches,
+    hmacVerified: verdict.hmacVerified,
+    message: verdict.message
+  };
+
+  res.status(200).json(body);
 }

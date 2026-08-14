@@ -234,4 +234,48 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
     assert.equal(forged.json.accountId, 'tenant_beta');
     assert.notEqual(forged.json.accountId, TENANT_ALPHA_ID);
   });
+
+  it('POST create sella contentHash SHA-256 y verify OK', async () => {
+    const created = await api(server.baseUrl, 'POST', '/api/reports', {
+      url: 'https://example.com',
+      summary: 'integrity'
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.json.integrityAlgorithm, 'SHA-256');
+    assert.equal(typeof created.json.contentHash, 'string');
+    assert.equal(created.json.contentHash.length, 64);
+    assert.equal(created.json.hmacSignature, undefined);
+
+    const verified = await api(
+      server.baseUrl,
+      'POST',
+      `/api/reports/${created.json.id}/verify`
+    );
+    assert.equal(verified.status, 200);
+    assert.equal(verified.json.valid, true);
+    assert.equal(verified.json.hashMatches, true);
+  });
+
+  it('verify detecta tampering at-rest (contentHash mismatch)', async () => {
+    const { reportsStore } = require('../src/store/reports.store');
+    const created = await api(server.baseUrl, 'POST', '/api/reports', {
+      url: 'https://example.com',
+      summary: 'before-tamper'
+    });
+    assert.equal(created.status, 201);
+
+    reportsStore.__dangerouslyReplaceForTests({
+      ...created.json,
+      summary: 'tampered-after-seal'
+    });
+
+    const verified = await api(
+      server.baseUrl,
+      'POST',
+      `/api/reports/${created.json.id}/verify`
+    );
+    assert.equal(verified.status, 200);
+    assert.equal(verified.json.valid, false);
+    assert.equal(verified.json.hashMatches, false);
+  });
 });
