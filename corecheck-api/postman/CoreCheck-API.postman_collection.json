@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "CoreCheck API - Fase A",
-    "description": "Contratos HTTP de corecheck-api (health, reports CRUD parcial).",
+    "description": "Contratos HTTP de corecheck-api. /api/* requiere Authorization: Bearer {{apiKey}} (o X-API-Key). Health es público.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -10,14 +10,29 @@
       "value": "http://localhost:3000"
     },
     {
+      "key": "apiKey",
+      "value": "cc_dev_local"
+    },
+    {
       "key": "reportId",
       "value": ""
     }
   ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
+  },
   "item": [
     {
       "name": "01 Health",
       "request": {
+        "auth": { "type": "noauth" },
         "method": "GET",
         "header": [],
         "url": "{{baseUrl}}/"
@@ -92,6 +107,15 @@
           "mode": "raw",
           "raw": "{}"
         },
+        "url": "{{baseUrl}}/api/reports"
+      }
+    },
+    {
+      "name": "08 Unauthorized no key",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [],
         "url": "{{baseUrl}}/api/reports"
       }
     }

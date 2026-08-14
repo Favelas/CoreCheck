@@ -4,7 +4,13 @@
  */
 
 /** Códigos máquina conocidos; ampliables solo vía unión tipada (no strings sueltos). */
-export type AppErrorCode = 'BAD_REQUEST' | 'NOT_FOUND' | 'INTERNAL_ERROR';
+export type AppErrorCode =
+  | 'BAD_REQUEST'
+  | 'NOT_FOUND'
+  | 'UNAUTHORIZED'
+  | 'MISCONFIGURED'
+  | 'INTERNAL_ERROR';
+
 
 export class AppError extends Error {
   readonly code: AppErrorCode;

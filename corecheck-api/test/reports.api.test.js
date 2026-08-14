@@ -21,11 +21,27 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
   });
 
   it('GET / → 200 health JSON', async () => {
-    const res = await api(server.baseUrl, 'GET', '/');
+    const res = await api(server.baseUrl, 'GET', '/', undefined, { auth: false });
     assert.equal(res.status, 200);
     assert.equal(res.json.status, 'ok');
     assert.equal(res.json.service, 'Corecheck API');
     assert.ok(typeof res.json.timestamp === 'string');
+  });
+
+  it('GET /api/reports sin API key → 401 UNAUTHORIZED', async () => {
+    const res = await api(server.baseUrl, 'GET', '/api/reports', undefined, {
+      auth: false
+    });
+    assert.equal(res.status, 401);
+    assert.equal(res.json.error, 'UNAUTHORIZED');
+  });
+
+  it('GET /api/reports con API key inválida → 401', async () => {
+    const res = await api(server.baseUrl, 'GET', '/api/reports', undefined, {
+      apiKey: 'wrong-key'
+    });
+    assert.equal(res.status, 401);
+    assert.equal(res.json.error, 'UNAUTHORIZED');
   });
 
   it('GET /api/reports → 200 envelope vacío', async () => {

@@ -4,12 +4,11 @@ const http = require('http');
 const { createApp } = require('../../src/app');
 const { reportsStore } = require('../../src/store/reports.store');
 
-/**
- * Cliente HTTP mínimo contra un puerto efímero.
- * Evita dependencias extra (supertest) en Fase B.5.
- */
+/** Key de prueba — inyectada vía createApp (no depende del env del developer). */
+const TEST_API_KEY = 'cc_test_key';
+
 function startTestServer() {
-  const app = createApp();
+  const app = createApp({ apiKeys: [TEST_API_KEY] });
   const server = http.createServer(app);
 
   return new Promise((resolve) => {
@@ -17,6 +16,7 @@ function startTestServer() {
       const { port } = server.address();
       resolve({
         baseUrl: `http://127.0.0.1:${port}`,
+        apiKey: TEST_API_KEY,
         async close() {
           await new Promise((r) => server.close(r));
         }
@@ -25,10 +25,21 @@ function startTestServer() {
   });
 }
 
-async function api(baseUrl, method, path, body) {
+/**
+ * @param {object} [options]
+ * @param {boolean} [options.auth=true] — si false, no envía API key (tests 401)
+ * @param {string} [options.apiKey] — override de key
+ */
+async function api(baseUrl, method, path, body, options = {}) {
+  const auth = options.auth !== false;
+  const apiKey = options.apiKey ?? TEST_API_KEY;
   const headers = {};
-  let payload;
 
+  if (auth) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  let payload;
   if (body !== undefined) {
     payload = JSON.stringify(body);
     headers['Content-Type'] = 'application/json';
@@ -48,6 +59,7 @@ async function api(baseUrl, method, path, body) {
 }
 
 module.exports = {
+  TEST_API_KEY,
   startTestServer,
   api,
   resetStore: () => reportsStore.clear()
