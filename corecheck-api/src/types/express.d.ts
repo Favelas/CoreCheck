@@ -9,13 +9,21 @@ declare global {
   namespace Express {
     interface Request {
       validatedReport?: CreateReportInput;
+      /** Tenant resuelto desde la API key (Fase 1.2). */
+      accountId?: string;
     }
   }
 }
 
-/** Request tras pasar validateReportBody (validatedReport garantizado). */
+/** Request autenticado con tenant. */
+export interface TenantRequest extends Request {
+  accountId: string;
+}
+
+/** Request tras validateReportBody (validatedReport garantizado). */
 export interface ValidatedRequest extends Request {
   validatedReport: CreateReportInput;
+  accountId: string;
 }
 
 export {};

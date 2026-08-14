@@ -61,6 +61,7 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
     assert.equal(res.json.url, 'https://example.com');
     assert.ok(res.json.id);
     assert.ok(res.json.createdAt);
+    assert.equal(res.json.accountId, 'tenant_default');
   });
 
   it('POST ignora id/createdAt del cliente', async () => {
@@ -163,5 +164,74 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
     assert.equal(res.status, 404);
     assert.equal(res.json.error, 'NOT_FOUND');
     assert.equal(res.headers.get('content-type')?.includes('json'), true);
+  });
+
+  it('Multi-tenant: Beta no ve ni lee reporte de Alpha (404, lista vacía de R1)', async () => {
+    const {
+      TENANT_ALPHA_KEY,
+      TENANT_BETA_KEY,
+      TENANT_ALPHA_ID
+    } = require('./helpers/http');
+
+    const created = await api(
+      server.baseUrl,
+      'POST',
+      '/api/reports',
+      { url: 'https://alpha.example.com', summary: 'R1-alpha' },
+      { apiKey: TENANT_ALPHA_KEY }
+    );
+    assert.equal(created.status, 201);
+    assert.equal(created.json.accountId, TENANT_ALPHA_ID);
+    const reportId = created.json.id;
+
+    const crossGet = await api(
+      server.baseUrl,
+      'GET',
+      `/api/reports/${reportId}`,
+      undefined,
+      { apiKey: TENANT_BETA_KEY }
+    );
+    assert.equal(crossGet.status, 404);
+    assert.equal(crossGet.json.error, 'NOT_FOUND');
+
+    const betaList = await api(
+      server.baseUrl,
+      'GET',
+      '/api/reports',
+      undefined,
+      { apiKey: TENANT_BETA_KEY }
+    );
+    assert.equal(betaList.status, 200);
+    assert.equal(betaList.json.total, 0);
+    assert.equal(
+      betaList.json.data.some((r) => r.id === reportId),
+      false
+    );
+
+    const alphaGet = await api(
+      server.baseUrl,
+      'GET',
+      `/api/reports/${reportId}`,
+      undefined,
+      { apiKey: TENANT_ALPHA_KEY }
+    );
+    assert.equal(alphaGet.status, 200);
+    assert.equal(alphaGet.json.id, reportId);
+    assert.equal(alphaGet.json.accountId, TENANT_ALPHA_ID);
+
+    const forged = await api(
+      server.baseUrl,
+      'POST',
+      '/api/reports',
+      {
+        url: 'https://beta.example.com',
+        accountId: TENANT_ALPHA_ID,
+        summary: 'forged-tenant'
+      },
+      { apiKey: TENANT_BETA_KEY }
+    );
+    assert.equal(forged.status, 201);
+    assert.equal(forged.json.accountId, 'tenant_beta');
+    assert.notEqual(forged.json.accountId, TENANT_ALPHA_ID);
   });
 });

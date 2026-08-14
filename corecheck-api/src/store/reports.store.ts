@@ -7,44 +7,60 @@ import type {
 } from '../types/contracts';
 
 /**
- * Capa de datos en memoria (Fase C.2).
- * - Controllers no mutan el array directamente.
- * - Tipado con CoreCheckReport / Vulnerability (contratos de dominio).
- * - Intercambiable por Postgres/SQLite sin cambiar rutas HTTP.
+ * Persistencia en memoria con aislamiento por accountId (Fase 1.2).
  */
 export class ReportsStore {
   private _reports: CoreCheckReport[] = [];
 
   /**
-   * Persiste un reporte. El servidor asigna id y createdAt.
-   * Si vienen findings, se clonan para no compartir referencias mutables.
+   * Alias enterprise: saveReport(payload, accountId).
+   * El servidor asigna id, createdAt y accountId (no confía en el cliente).
    */
-  create(payload: CreateReportInput): CoreCheckReport {
+  saveReport(payload: CreateReportInput, accountId: string): CoreCheckReport {
+    return this.create(payload, accountId);
+  }
+
+  create(payload: CreateReportInput, accountId: string): CoreCheckReport {
     const report: CoreCheckReport = {
       ...payload,
       ...(payload.findings !== undefined
         ? { findings: this.cloneFindings(payload.findings) }
         : {}),
       id: randomUUID(),
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      accountId
     };
 
     this._reports.push(report);
     return report;
   }
 
-  list(): ReportListEnvelope {
+  /** Alias: getAllReports(accountId) */
+  getAllReports(accountId: string): ReportListEnvelope {
+    return this.list(accountId);
+  }
+
+  list(accountId: string): ReportListEnvelope {
+    const data = this._reports.filter((item) => item.accountId === accountId);
     return {
-      total: this._reports.length,
-      data: this._reports
+      total: data.length,
+      data
     };
   }
 
-  findById(id: string): CoreCheckReport | undefined {
-    return this._reports.find((item) => item.id === id);
+  /** Alias: getReportById(id, accountId) — sin match de tenant → undefined (404). */
+  getReportById(id: string, accountId: string): CoreCheckReport | undefined {
+    return this.findById(id, accountId);
   }
 
-  /** Vacía el almacén — solo para tests (aislamiento entre casos). */
+  findById(id: string, accountId: string): CoreCheckReport | undefined {
+    const report = this._reports.find((item) => item.id === id);
+    if (!report || report.accountId !== accountId) {
+      return undefined;
+    }
+    return report;
+  }
+
   clear(): void {
     this._reports = [];
   }
@@ -56,5 +72,4 @@ export class ReportsStore {
   }
 }
 
-/** Singleton de proceso — una sola fuente de verdad mientras corre Node. */
 export const reportsStore = new ReportsStore();

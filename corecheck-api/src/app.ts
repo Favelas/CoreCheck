@@ -4,26 +4,44 @@ import { notFoundHandler } from './middlewares/notFound';
 import { requireApiKey } from './middlewares/requireApiKey';
 import { healthRouter } from './routes/health.routes';
 import { reportsRouter } from './routes/reports.routes';
-import { parseApiKeysFromEnv } from './security/apiKeys';
+import {
+  bindingsFromApiKeys,
+  parseApiKeyBindingsFromEnv,
+  type ApiKeyBinding
+} from './security/apiKeys';
 
 export interface CreateAppOptions {
-  /** Keys válidas; si se omite, se leen de CORECHECK_API_KEY(S). */
+  /** Bindings key → accountId (preferido, Fase 1.2). */
+  readonly apiKeyBindings?: readonly ApiKeyBinding[];
+  /**
+   * Compat Fase 1.1: lista de keys → todas mapean a tenant_default.
+   * Ignorado si apiKeyBindings está definido.
+   */
   readonly apiKeys?: readonly string[];
 }
 
+function resolveBindings(options: CreateAppOptions): ApiKeyBinding[] {
+  if (options.apiKeyBindings !== undefined) {
+    return [...options.apiKeyBindings];
+  }
+  if (options.apiKeys !== undefined) {
+    return bindingsFromApiKeys(options.apiKeys);
+  }
+  return parseApiKeyBindingsFromEnv();
+}
+
 /**
- * Factory de la app Express (sin listen).
- * /api/* exige API key (fail-closed si no hay keys configuradas → 503).
- * GET / (health) permanece público.
+ * Factory Express: /api/* autenticado + aislado por accountId.
+ * GET / health público.
  */
 export function createApp(options: CreateAppOptions = {}): Express {
   const app = express();
-  const apiKeys = options.apiKeys ?? parseApiKeysFromEnv();
+  const bindings = resolveBindings(options);
 
   app.use(express.json({ limit: '1mb' }));
 
   app.use('/', healthRouter);
-  app.use('/api', requireApiKey(apiKeys));
+  app.use('/api', requireApiKey(bindings));
   app.use('/api/reports', reportsRouter);
 
   app.use(notFoundHandler);

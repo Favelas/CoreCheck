@@ -1,14 +1,20 @@
 import type { RequestHandler } from 'express';
 import { AppError } from '../errors/AppError';
-import { extractBearerOrApiKey } from '../security/apiKeys';
+import {
+  extractBearerOrApiKey,
+  type ApiKeyBinding
+} from '../security/apiKeys';
 
 /**
- * Protege rutas /api/* — requiere API key válida.
- * Headers: Authorization: Bearer <key>  |  X-API-Key: <key>
+ * Protege /api/* — valida API key e inyecta req.accountId (tenant isolation).
  */
-export function requireApiKey(validKeys: readonly string[]): RequestHandler {
+export function requireApiKey(
+  bindings: readonly ApiKeyBinding[]
+): RequestHandler {
+  const byKey = new Map(bindings.map((b) => [b.key, b.accountId]));
+
   return (req, _res, next) => {
-    if (validKeys.length === 0) {
+    if (byKey.size === 0) {
       next(
         new AppError(
           'MISCONFIGURED',
@@ -24,7 +30,7 @@ export function requireApiKey(validKeys: readonly string[]): RequestHandler {
       req.header('x-api-key') ?? undefined
     );
 
-    if (provided === undefined || !validKeys.includes(provided)) {
+    if (provided === undefined) {
       next(
         new AppError(
           'UNAUTHORIZED',
@@ -35,6 +41,19 @@ export function requireApiKey(validKeys: readonly string[]): RequestHandler {
       return;
     }
 
+    const accountId = byKey.get(provided);
+    if (accountId === undefined) {
+      next(
+        new AppError(
+          'UNAUTHORIZED',
+          'API key ausente o inválida. Use Authorization: Bearer <key> o X-API-Key.',
+          401
+        )
+      );
+      return;
+    }
+
+    req.accountId = accountId;
     next();
   };
 }

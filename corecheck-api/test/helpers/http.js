@@ -4,11 +4,24 @@ const http = require('http');
 const { createApp } = require('../../src/app');
 const { reportsStore } = require('../../src/store/reports.store');
 
-/** Key de prueba — inyectada vía createApp (no depende del env del developer). */
 const TEST_API_KEY = 'cc_test_key';
+const TEST_ACCOUNT_ID = 'tenant_default';
 
-function startTestServer() {
-  const app = createApp({ apiKeys: [TEST_API_KEY] });
+const TENANT_ALPHA_KEY = 'cc_key_alpha';
+const TENANT_BETA_KEY = 'cc_key_beta';
+const TENANT_ALPHA_ID = 'tenant_alpha';
+const TENANT_BETA_ID = 'tenant_beta';
+
+function startTestServer(options = {}) {
+  const app =
+    options.app ??
+    createApp({
+      apiKeyBindings: [
+        { key: TEST_API_KEY, accountId: TEST_ACCOUNT_ID },
+        { key: TENANT_ALPHA_KEY, accountId: TENANT_ALPHA_ID },
+        { key: TENANT_BETA_KEY, accountId: TENANT_BETA_ID }
+      ]
+    });
   const server = http.createServer(app);
 
   return new Promise((resolve) => {
@@ -25,11 +38,6 @@ function startTestServer() {
   });
 }
 
-/**
- * @param {object} [options]
- * @param {boolean} [options.auth=true] — si false, no envía API key (tests 401)
- * @param {string} [options.apiKey] — override de key
- */
 async function api(baseUrl, method, path, body, options = {}) {
   const auth = options.auth !== false;
   const apiKey = options.apiKey ?? TEST_API_KEY;
@@ -60,6 +68,11 @@ async function api(baseUrl, method, path, body, options = {}) {
 
 module.exports = {
   TEST_API_KEY,
+  TEST_ACCOUNT_ID,
+  TENANT_ALPHA_KEY,
+  TENANT_BETA_KEY,
+  TENANT_ALPHA_ID,
+  TENANT_BETA_ID,
   startTestServer,
   api,
   resetStore: () => reportsStore.clear()

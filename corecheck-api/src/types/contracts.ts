@@ -41,11 +41,12 @@ export interface CreateReportInput {
 
 /**
  * Representación persistida de un reporte (respuesta 201 / GET by id).
- * El servidor es dueño de id y createdAt.
+ * El servidor es dueño de id, createdAt y accountId (tenant isolation).
  */
 export interface CoreCheckReport extends CreateReportInput {
   readonly id: string;
   readonly createdAt: string;
+  readonly accountId: string;
 }
 
 /** Envelope de listado — lista vacía es 200, no 404. */

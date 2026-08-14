@@ -6,14 +6,18 @@
  * Ejemplo PowerShell: $env:CORECHECK_API_KEY="cc_dev_local"
  */
 import { createApp } from './src/app';
-import { parseApiKeysFromEnv } from './src/security/apiKeys';
+import { parseApiKeyBindingsFromEnv } from './src/security/apiKeys';
 
 const PORT = Number(process.env['PORT']) || 3000;
-const configuredKeys = parseApiKeysFromEnv();
+const configuredBindings = parseApiKeyBindingsFromEnv();
 
-if (configuredKeys.length === 0) {
+if (configuredBindings.length === 0) {
   console.warn(
     '[CoreCheck API] ADVERTENCIA: sin CORECHECK_API_KEY — /api/* responderá 503 MISCONFIGURED. Health (/) sigue público.'
+  );
+} else {
+  console.log(
+    `[CoreCheck API] ${configuredBindings.length} API key(s) cargada(s) con tenant binding.`
   );
 }
 
