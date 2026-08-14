@@ -15,6 +15,8 @@ import {
   TicketClient
 } from '../integrations/index.js';
 import { LicenseValidator, UsageTelemetry } from '../licensing/index.js';
+import { isUploadEnabled } from '../http/control_plane_http.js';
+import { maybeUploadAuditReport } from '../services/upload_report.js';
 import { generateHtmlReport } from '../reporters/htmlReporter.js';
 import { generateMarkdownReport } from '../reporters/markdownReporter.js';
 import { buildAttestation, generatePdfReport } from '../reporters/pdf_reporter.js';
@@ -247,6 +249,20 @@ function registerRunOptions(command: Command): Command {
     .option(
       '--api-key <key>',
       'API Key comercial CoreCheck (alternativa: env CORECHECK_API_KEY)'
+    )
+    .option(
+      '--upload',
+      'Publicar el reporte en corecheck-api POST /api/reports (env CORECHECK_UPLOAD=true)',
+      false
+    )
+    .option(
+      '--upload-url <url>',
+      'Base URL del Control Plane de reportes (env CORECHECK_REPORTS_API_URL / CORECHECK_API_URL)'
+    )
+    .option(
+      '--upload-strict',
+      'Si el upload falla, abortar con exit NETWORK (default: soft-fail + warn)',
+      false
     )
     .option(
       '--skip-license',
@@ -693,6 +709,29 @@ runCommand.action(async (opts: Record<string, unknown>, command: Command) => {
       } else {
         console.warn(
           `Webhook (${result.channel}): fallo — ${result.error ?? result.status ?? 'unknown'}`
+        );
+      }
+    }
+
+    // ——— Slice 1: Upload reporte al Control Plane (corecheck-api) ———
+    const uploadEnabled = isUploadEnabled(Boolean(opts.upload));
+    if (uploadEnabled) {
+      try {
+        const uploadResult = await maybeUploadAuditReport({
+          enabled: true,
+          strict: Boolean(opts.uploadStrict),
+          apiKey: apiKey,
+          baseUrl: opts.uploadUrl ? String(opts.uploadUrl) : undefined,
+          bundle
+        });
+        if (uploadResult.uploaded && uploadResult.reportId) {
+          console.log(`[Upload] reportId=${uploadResult.reportId}`);
+        }
+      } catch (uploadError) {
+        // --upload-strict: clasificar como NETWORK y salir.
+        throw new CoreCheckError(
+          uploadError instanceof Error ? uploadError.message : String(uploadError),
+          'NETWORK'
         );
       }
     }

@@ -7,12 +7,17 @@ import {
   SaaSApiConfig,
   UsageTelemetryEvent
 } from '../types/license.js';
+import {
+  ControlPlaneHttpClient,
+  ControlPlaneHttpError
+} from '../http/control_plane_http.js';
 
 export class SaaSApiError extends Error {
   constructor(
     message: string,
     public readonly status?: number,
-    public readonly code?: string
+    public readonly code?: string,
+    public readonly requestId?: string
   ) {
     super(message);
     this.name = 'SaaSApiError';
@@ -20,18 +25,19 @@ export class SaaSApiError extends Error {
 }
 
 /**
- * Cliente REST hacia el Control Plane SaaS (Supabase/API gateway).
- * Todos los métodos respetan timeout corto para no bloquear CI.
+ * Cliente REST hacia el Control Plane de licencias/telemetría.
+ * Comparte capa HTTP (API key + x-request-id) con ReportsClient.
  */
 export class SaaSApiClient {
-  private readonly baseUrl: string;
-  private readonly timeoutMs: number;
-  private readonly apiKey?: string;
+  private readonly http: ControlPlaneHttpClient;
 
   constructor(config: SaaSApiConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/+$/, '');
-    this.timeoutMs = config.timeoutMs ?? 4000;
-    this.apiKey = config.apiKey;
+    this.http = new ControlPlaneHttpClient({
+      baseUrl: config.baseUrl,
+      timeoutMs: config.timeoutMs ?? 4000,
+      userAgent: 'CoreCheck-CLI/4.0',
+      ...(config.apiKey ? { apiKey: config.apiKey } : {})
+    });
   }
 
   public async validateLicense(
@@ -44,7 +50,9 @@ export class SaaSApiClient {
   }
 
   public async getAccountStatus(accountId: string): Promise<AccountStatusResponse> {
-    return this.get<AccountStatusResponse>(`/v1/accounts/${encodeURIComponent(accountId)}/status`);
+    return this.get<AccountStatusResponse>(
+      `/v1/accounts/${encodeURIComponent(accountId)}/status`
+    );
   }
 
   public async renewMonthlyQuota(accountId: string): Promise<QuotaRenewalResponse> {
@@ -69,65 +77,35 @@ export class SaaSApiClient {
   }
 
   private async get<T>(path: string): Promise<T> {
-    return this.request<T>('GET', path);
+    try {
+      return await this.http.get<T>(path);
+    } catch (error) {
+      throw mapToSaaS(error);
+    }
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
-    return this.request<T>('POST', path, body);
-  }
-
-  private async request<T>(
-    method: 'GET' | 'POST',
-    path: string,
-    body?: unknown
-  ): Promise<T> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-
     try {
-      const headers: Record<string, string> = {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'CoreCheck-CLI/4.0'
-      };
-      if (this.apiKey) {
-        headers.Authorization = `Bearer ${this.apiKey}`;
-      }
-
-      const response = await fetch(`${this.baseUrl}${path}`, {
-        method,
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: controller.signal
-      });
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        let code: string | undefined;
-        try {
-          code = (JSON.parse(text) as { code?: string }).code;
-        } catch {
-          // ignore
-        }
-        throw new SaaSApiError(
-          `SaaS API ${method} ${path} → ${response.status}: ${text.slice(0, 200)}`,
-          response.status,
-          code
-        );
-      }
-
-      return (await response.json()) as T;
+      return await this.http.post<T>(path, body);
     } catch (error) {
-      if (error instanceof SaaSApiError) {
-        throw error;
-      }
-      const message =
-        error instanceof Error && error.name === 'AbortError'
-          ? `SaaS API timeout after ${this.timeoutMs}ms`
-          : (error as Error).message;
-      throw new SaaSApiError(message);
-    } finally {
-      clearTimeout(timer);
+      throw mapToSaaS(error);
     }
   }
+}
+
+function mapToSaaS(error: unknown): SaaSApiError {
+  if (error instanceof SaaSApiError) {
+    return error;
+  }
+  if (error instanceof ControlPlaneHttpError) {
+    return new SaaSApiError(
+      error.message.replace(/^Control Plane/, 'SaaS API'),
+      error.status,
+      error.code,
+      error.requestId
+    );
+  }
+  return new SaaSApiError(
+    error instanceof Error ? error.message : String(error)
+  );
 }

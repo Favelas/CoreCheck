@@ -1,0 +1,95 @@
+# Example: run CoreCheck CLI audit in CI and upload the report to corecheck-api.
+# Copy/adapt for customer pipelines. Requires secrets:
+#   CORECHECK_API_KEY  — tenant-bound key accepted by corecheck-api
+#   CORECHECK_API_URL  — base URL of corecheck-api (e.g. https://api.example.com)
+#
+# Local equivalent:
+#   $env:CORECHECK_UPLOAD="true"
+#   $env:CORECHECK_API_URL="http://localhost:3000"
+#   $env:CORECHECK_API_KEY="cc_dev_local"
+#   npm run audit -- --url https://example.com --fail-on HIGH --skip-license --upload
+name: E2E Audit + Report Upload (example)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'URL to audit'
+        required: true
+        default: 'https://example.com'
+        type: string
+      fail_on:
+        description: 'Gate threshold'
+        required: false
+        default: 'HIGH'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  audit-and-upload:
+    name: Audit → POST /api/reports
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build CLI
+        run: npm run build
+
+      - name: Run audit with upload
+        id: audit
+        continue-on-error: true
+        env:
+          CORECHECK_API_KEY: ${{ secrets.CORECHECK_API_KEY }}
+          CORECHECK_API_URL: ${{ secrets.CORECHECK_API_URL }}
+          CORECHECK_UPLOAD: 'true'
+        run: |
+          if [ -z "${CORECHECK_API_KEY:-}" ] || [ -z "${CORECHECK_API_URL:-}" ]; then
+            echo "Missing CORECHECK_API_KEY or CORECHECK_API_URL secrets."
+            exit 2
+          fi
+          set +e
+          node dist/cli/index.js run \
+            --url "${{ inputs.target_url }}" \
+            --fail-on "${{ inputs.fail_on }}" \
+            --formats json,sarif \
+            --output-dir ./audit-results \
+            --max-pages 3 \
+            --concurrency 1 \
+            --api-key "${CORECHECK_API_KEY}" \
+            --skip-license \
+            --upload \
+            --upload-url "${CORECHECK_API_URL}"
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          exit "${code}"
+
+      - name: Upload local artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corecheck-audit-results
+          path: audit-results/
+          if-no-files-found: warn
+
+      - name: Surface gate exit code
+        if: steps.audit.outcome == 'failure'
+        run: |
+          echo "Audit step failed (gate or upload-strict). Check logs for [GATE FAIL] / [Upload]."
+          exit 1
