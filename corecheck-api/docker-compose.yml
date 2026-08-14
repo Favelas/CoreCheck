@@ -1,6 +1,6 @@
-# Fase 3.2 (siguiente): Postgres listo para conectar cuando DATABASE_URL exista.
-# La API hoy usa CORECHECK_PERSISTENCE=file|memory vía ReportsRepository.
-# Cuando se active el adapter Postgres, este compose cubre el motor local.
+# Fase 3.2: Postgres. API: CORECHECK_PERSISTENCE=postgres
+# DATABASE_URL=postgres://corecheck:corecheck@localhost:5432/corecheck_api
+# Luego: npm run db:migrate && npm run dev
 
 services:
   postgres:

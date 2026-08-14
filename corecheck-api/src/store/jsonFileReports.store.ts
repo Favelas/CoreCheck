@@ -26,7 +26,6 @@ export interface JsonFileReportsStoreOptions {
 
 /**
  * Persistencia durable en JSON (Fase 3.1).
- * Escritura almost-atomic (tmp + replace) sin dependencias nativas.
  */
 export class JsonFileReportsStore implements ReportsRepository {
   private readonly filePath: string;
@@ -37,7 +36,10 @@ export class JsonFileReportsStore implements ReportsRepository {
     this.loadFromDisk();
   }
 
-  saveReport(payload: CreateReportInput, accountId: string): CoreCheckReport {
+  async saveReport(
+    payload: CreateReportInput,
+    accountId: string
+  ): Promise<CoreCheckReport> {
     const draft = {
       ...payload,
       ...(payload.findings !== undefined
@@ -54,12 +56,15 @@ export class JsonFileReportsStore implements ReportsRepository {
     return report;
   }
 
-  getAllReports(accountId: string): ReportListEnvelope {
+  async getAllReports(accountId: string): Promise<ReportListEnvelope> {
     const data = this._reports.filter((item) => item.accountId === accountId);
     return { total: data.length, data };
   }
 
-  getReportById(id: string, accountId: string): CoreCheckReport | undefined {
+  async getReportById(
+    id: string,
+    accountId: string
+  ): Promise<CoreCheckReport | undefined> {
     const report = this._reports.find((item) => item.id === id);
     if (!report || report.accountId !== accountId) {
       return undefined;
@@ -67,7 +72,7 @@ export class JsonFileReportsStore implements ReportsRepository {
     return report;
   }
 
-  clear(): void {
+  async clear(): Promise<void> {
     this._reports = [];
     this.persistToDisk();
   }
@@ -124,7 +129,7 @@ export class JsonFileReportsStore implements ReportsRepository {
       try {
         fs.unlinkSync(tmpPath);
       } catch {
-        /* ignore cleanup */
+        /* ignore */
       }
     }
   }

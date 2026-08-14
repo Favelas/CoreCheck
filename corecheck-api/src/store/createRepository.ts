@@ -1,20 +1,26 @@
 import path from 'node:path';
+import type { Pool } from 'pg';
+import { createPoolFromEnv } from '../db/pool';
+import { PostgresReportsRepository } from '../repositories/PostgresReportsRepository';
 import type { ReportsRepository } from './reports.repository';
 import { InMemoryReportsStore } from './reports.store';
 import { JsonFileReportsStore } from './jsonFileReports.store';
 
-export type PersistenceMode = 'memory' | 'file';
+export type PersistenceMode = 'memory' | 'file' | 'postgres';
 
 export interface CreateRepositoryOptions {
   readonly mode?: PersistenceMode;
   readonly dataDir?: string;
   readonly env?: NodeJS.ProcessEnv;
+  /** Pool inyectable (tests / migrate). */
+  readonly pool?: Pool;
 }
 
 /**
- * Factory de repositorio según env:
- * - CORECHECK_PERSISTENCE=memory|file (default: file)
- * - CORECHECK_DATA_DIR (default: ./data)
+ * Factory:
+ * - CORECHECK_PERSISTENCE=memory|file|postgres (default: file)
+ * - CORECHECK_DATA_DIR (file)
+ * - DATABASE_URL o POSTGRES_* (postgres)
  */
 export function createReportsRepositoryFromEnv(
   options: CreateRepositoryOptions = {}
@@ -37,7 +43,12 @@ export function createReportsRepositoryFromEnv(
     return new JsonFileReportsStore({ filePath });
   }
 
+  if (mode === 'postgres') {
+    const pool = options.pool ?? createPoolFromEnv(env);
+    return new PostgresReportsRepository(pool);
+  }
+
   throw new Error(
-    `CORECHECK_PERSISTENCE inválido: "${mode}". Use memory|file.`
+    `CORECHECK_PERSISTENCE inválido: "${mode}". Use memory|file|postgres.`
   );
 }

@@ -22,11 +22,11 @@ describe('JsonFileReportsStore (Phase 3 durable persistence)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('persiste y recarga reportes tras "reinicio" (nueva instancia)', () => {
+  it('persiste y recarga reportes tras "reinicio" (nueva instancia)', async () => {
     const storeA = new JsonFileReportsStore({ filePath });
-    storeA.clear();
+    await storeA.clear();
 
-    const saved = storeA.saveReport(
+    const saved = await storeA.saveReport(
       { url: 'https://example.com', summary: 'durable' },
       'tenant_alpha'
     );
@@ -36,13 +36,13 @@ describe('JsonFileReportsStore (Phase 3 durable persistence)', () => {
     assert.equal(fs.existsSync(filePath), true);
 
     const storeB = new JsonFileReportsStore({ filePath });
-    const listed = storeB.getAllReports('tenant_alpha');
+    const listed = await storeB.getAllReports('tenant_alpha');
     assert.equal(listed.total, 1);
     assert.equal(listed.data[0].id, saved.id);
     assert.equal(listed.data[0].summary, 'durable');
 
-    assert.equal(storeB.getAllReports('tenant_beta').total, 0);
-    assert.equal(storeB.getReportById(saved.id, 'tenant_beta'), undefined);
+    assert.equal((await storeB.getAllReports('tenant_beta')).total, 0);
+    assert.equal(await storeB.getReportById(saved.id, 'tenant_beta'), undefined);
   });
 
   it('documento en disco tiene version=1', () => {

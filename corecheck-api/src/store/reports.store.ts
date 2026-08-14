@@ -22,11 +22,17 @@ export class InMemoryReportsStore
 {
   private _reports: CoreCheckReport[] = [];
 
-  saveReport(payload: CreateReportInput, accountId: string): CoreCheckReport {
+  async saveReport(
+    payload: CreateReportInput,
+    accountId: string
+  ): Promise<CoreCheckReport> {
     return this.create(payload, accountId);
   }
 
-  create(payload: CreateReportInput, accountId: string): CoreCheckReport {
+  async create(
+    payload: CreateReportInput,
+    accountId: string
+  ): Promise<CoreCheckReport> {
     const draft = {
       ...payload,
       ...(payload.findings !== undefined
@@ -42,11 +48,7 @@ export class InMemoryReportsStore
     return report;
   }
 
-  getAllReports(accountId: string): ReportListEnvelope {
-    return this.list(accountId);
-  }
-
-  list(accountId: string): ReportListEnvelope {
+  async getAllReports(accountId: string): Promise<ReportListEnvelope> {
     const data = this._reports.filter((item) => item.accountId === accountId);
     return {
       total: data.length,
@@ -54,11 +56,10 @@ export class InMemoryReportsStore
     };
   }
 
-  getReportById(id: string, accountId: string): CoreCheckReport | undefined {
-    return this.findById(id, accountId);
-  }
-
-  findById(id: string, accountId: string): CoreCheckReport | undefined {
+  async getReportById(
+    id: string,
+    accountId: string
+  ): Promise<CoreCheckReport | undefined> {
     const report = this._reports.find((item) => item.id === id);
     if (!report || report.accountId !== accountId) {
       return undefined;
@@ -73,7 +74,7 @@ export class InMemoryReportsStore
     }
   }
 
-  clear(): void {
+  async clear(): Promise<void> {
     this._reports = [];
   }
 
@@ -84,8 +85,5 @@ export class InMemoryReportsStore
   }
 }
 
-/** Singleton de memoria (tests / fallback). */
 export const reportsStore = new InMemoryReportsStore();
-
-/** @deprecated Alias de compat — preferir InMemoryReportsStore. */
 export { InMemoryReportsStore as ReportsStore };

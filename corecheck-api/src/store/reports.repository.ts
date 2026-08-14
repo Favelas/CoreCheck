@@ -5,17 +5,23 @@ import type {
 } from '../types/contracts';
 
 /**
- * Puerto de persistencia (Fase 3).
- * InMemory / JsonFile / (futuro) Postgres implementan el mismo contrato.
+ * Puerto de persistencia (Fase 3) — async para soportar Postgres sin bloquear el event loop.
+ * InMemory / JsonFile / Postgres implementan el mismo contrato.
  */
 export interface ReportsRepository {
-  saveReport(payload: CreateReportInput, accountId: string): CoreCheckReport;
-  getAllReports(accountId: string): ReportListEnvelope;
-  getReportById(id: string, accountId: string): CoreCheckReport | undefined;
-  clear(): void;
+  saveReport(
+    payload: CreateReportInput,
+    accountId: string
+  ): Promise<CoreCheckReport>;
+  getAllReports(accountId: string): Promise<ReportListEnvelope>;
+  getReportById(
+    id: string,
+    accountId: string
+  ): Promise<CoreCheckReport | undefined>;
+  clear(): Promise<void>;
 }
 
 /** Extensión solo para tests de integridad (tampering). */
 export interface ReportsRepositoryTestHooks {
-  __dangerouslyReplaceForTests?(report: CoreCheckReport): void;
+  __dangerouslyReplaceForTests?(report: CoreCheckReport): void | Promise<void>;
 }

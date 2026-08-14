@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/reports.api.test.js test/report_integrity.test.js test/persistence.file.test.js",
+    "test": "node --import tsx --test test/reports.api.test.js test/report_integrity.test.js test/persistence.file.test.js test/postgres.repository.test.js",
+    "db:migrate": "tsx src/db/migrate-cli.ts",
     "prestart": "npm run build"
   },
   "keywords": [
@@ -23,11 +24,13 @@
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.10",
+    "@types/pg": "^8.21.0",
     "nodemon": "^3.1.14",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3"

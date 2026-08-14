@@ -18,8 +18,8 @@ export interface CreateAppOptions {
   readonly apiKeys?: readonly string[];
   /** Inyectar repositorio (tests = memory; prod = file/postgres). */
   readonly repository?: ReportsRepository;
-  /** Si no hay repository, fuerza modo memory|file. */
-  readonly persistence?: 'memory' | 'file';
+  /** Si no hay repository, fuerza modo memory|file|postgres. */
+  readonly persistence?: 'memory' | 'file' | 'postgres';
   readonly dataDir?: string;
 }
 

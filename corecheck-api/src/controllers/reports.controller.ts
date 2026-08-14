@@ -28,7 +28,7 @@ function requireReportId(req: Request): string {
   return id;
 }
 
-export function createReport(req: Request, res: Response): void {
+export async function createReport(req: Request, res: Response): Promise<void> {
   if (req.validatedReport === undefined) {
     throw new AppError(
       'BAD_REQUEST',
@@ -38,23 +38,28 @@ export function createReport(req: Request, res: Response): void {
   }
 
   const accountId = requireAccountId(req);
-  const report = getReportsRepository().saveReport(
+  const report = await getReportsRepository().saveReport(
     req.validatedReport,
     accountId
   );
   res.status(201).json(report);
 }
 
-export function listReports(req: Request, res: Response): void {
+export async function listReports(req: Request, res: Response): Promise<void> {
   const accountId = requireAccountId(req);
-  res.status(200).json(getReportsRepository().getAllReports(accountId));
+  res
+    .status(200)
+    .json(await getReportsRepository().getAllReports(accountId));
 }
 
-export function getReportById(req: Request, res: Response): void {
+export async function getReportById(
+  req: Request,
+  res: Response
+): Promise<void> {
   const accountId = requireAccountId(req);
   const id = requireReportId(req);
 
-  const report = getReportsRepository().getReportById(id, accountId);
+  const report = await getReportsRepository().getReportById(id, accountId);
   if (!report) {
     throw new AppError(
       'NOT_FOUND',
@@ -66,11 +71,11 @@ export function getReportById(req: Request, res: Response): void {
   res.status(200).json(report);
 }
 
-export function verifyReport(req: Request, res: Response): void {
+export async function verifyReport(req: Request, res: Response): Promise<void> {
   const accountId = requireAccountId(req);
   const id = requireReportId(req);
 
-  const report = getReportsRepository().getReportById(id, accountId);
+  const report = await getReportsRepository().getReportById(id, accountId);
   if (!report) {
     throw new AppError(
       'NOT_FOUND',

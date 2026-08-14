@@ -16,8 +16,8 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
     await server.close();
   });
 
-  beforeEach(() => {
-    resetStore();
+  beforeEach(async () => {
+    await resetStore();
   });
 
   it('GET / → 200 health JSON', async () => {
