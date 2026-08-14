@@ -4,7 +4,7 @@ Narrativa de controles mapeable a TSC (Trust Services Criteria). **No es una cer
 
 | Control area | Criterio TSC (ref.) | Implementación actual | Evidencia |
 | :--- | :--- | :--- | :--- |
-| **Access control** | CC6.1 | Bearer / `X-API-Key`; `/api/*` exige key; health/metrics/viewer estáticos públicos | `requireApiKey`, contract tests 401 |
+| **Access control** | CC6.1 | Bearer / `X-API-Key`; bootstrap env + keys dinámicas hasheadas; `/api/*` exige key | `requireApiKey`, `POST /api/admin/api-keys`, contract tests |
 | **Tenant isolation** | CC6.1 | `accountId` binding; cross-tenant → **404** (sin leak de existencia) | Phase 1.2 tests |
 | **Secret handling** | CC6.1 / C1 | Denylist de campos sensibles en ingest (`apiKey`, tokens, passwords) | SEC-API-01 tests |
 | **Change management** | CC8.1 | CI path-filter: typecheck + tests + build en `corecheck-api` | `.github/workflows/corecheck-api.yml` |

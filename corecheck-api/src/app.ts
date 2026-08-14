@@ -5,6 +5,7 @@ import { notFoundHandler } from './middlewares/notFound';
 import { rateLimit } from './middlewares/rateLimit';
 import { requestContext } from './middlewares/requestContext';
 import { requireApiKey } from './middlewares/requireApiKey';
+import { apiKeysRouter } from './routes/apiKeys.routes';
 import { healthRouter } from './routes/health.routes';
 import { reportsRouter } from './routes/reports.routes';
 import {
@@ -12,6 +13,9 @@ import {
   parseApiKeyBindingsFromEnv,
   type ApiKeyBinding
 } from './security/apiKeys';
+import { setApiKeyRepository } from './store/apiKey.context';
+import type { ApiKeyRepository } from './store/apiKeys.repository';
+import { createApiKeyRepositoryFromEnv } from './store/createApiKeyRepository';
 import { createReportsRepositoryFromEnv } from './store/createRepository';
 import { setReportsRepository } from './store/repository.context';
 import type { ReportsRepository } from './store/reports.repository';
@@ -25,6 +29,7 @@ export interface CreateAppOptions {
   readonly apiKeyBindings?: readonly ApiKeyBinding[];
   readonly apiKeys?: readonly string[];
   readonly repository?: ReportsRepository;
+  readonly apiKeyRepository?: ApiKeyRepository;
   readonly persistence?: 'memory' | 'file' | 'postgres';
   readonly dataDir?: string;
   /** Default prod: 120 req / 60s. Tests pasan un max alto o disableRateLimit. */
@@ -43,7 +48,7 @@ function resolveBindings(options: CreateAppOptions): ApiKeyBinding[] {
 }
 
 /**
- * Factory Express: auth + tenant + repository DI + observability.
+ * Factory Express: auth + tenant + repository DI + observability + admin keys.
  */
 export function createApp(options: CreateAppOptions = {}): Express {
   const app = express();
@@ -58,6 +63,16 @@ export function createApp(options: CreateAppOptions = {}): Express {
       ...(options.dataDir !== undefined ? { dataDir: options.dataDir } : {})
     });
   setReportsRepository(repository);
+
+  const apiKeyRepository =
+    options.apiKeyRepository ??
+    createApiKeyRepositoryFromEnv({
+      ...(options.persistence !== undefined
+        ? { mode: options.persistence }
+        : {})
+    });
+  setApiKeyRepository(apiKeyRepository);
+
   const persistenceLabel =
     options.persistence ??
     (options.repository ? 'memory' : (process.env['CORECHECK_PERSISTENCE'] ?? 'file'));
@@ -73,8 +88,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
     app.use('/api', rateLimit(rl));
   }
 
-  app.use('/api', requireApiKey(bindings));
+  app.use('/api', requireApiKey(bindings, apiKeyRepository));
   app.use('/api/reports', reportsRouter);
+  app.use('/api/admin/api-keys', apiKeysRouter);
 
   // Report Viewer (Fase 4.3): UI estática; datos solo vía /api con API key.
   const viewerDir = path.join(process.cwd(), 'public', 'viewer');

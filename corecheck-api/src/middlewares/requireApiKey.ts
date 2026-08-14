@@ -4,56 +4,80 @@ import {
   extractBearerOrApiKey,
   type ApiKeyBinding
 } from '../security/apiKeys';
+import {
+  hashApiKey,
+  type ApiKeyRepository
+} from '../store/apiKeys.repository';
 
 /**
- * Protege /api/* — valida API key e inyecta req.accountId (tenant isolation).
+ * Protege /api/*:
+ * 1) Bootstrap env bindings (CORECHECK_API_KEY / KEYS)
+ * 2) Keys dinámicas (SHA-256 lookup en ApiKeyRepository)
+ *
+ * Sin bootstrap env y sin credential → 503 MISCONFIGURED
+ * (hace falta al menos una key de arranque para mint/rotate).
  */
 export function requireApiKey(
-  bindings: readonly ApiKeyBinding[]
+  bindings: readonly ApiKeyBinding[],
+  apiKeyRepository: ApiKeyRepository
 ): RequestHandler {
   const byKey = new Map(bindings.map((b) => [b.key, b.accountId]));
 
   return (req, _res, next) => {
-    if (byKey.size === 0) {
-      next(
-        new AppError(
-          'MISCONFIGURED',
-          'El servidor no tiene CORECHECK_API_KEY configurada.',
-          503
-        )
-      );
-      return;
-    }
+    void (async () => {
+      try {
+        const provided = extractBearerOrApiKey(
+          req.header('authorization') ?? undefined,
+          req.header('x-api-key') ?? undefined
+        );
 
-    const provided = extractBearerOrApiKey(
-      req.header('authorization') ?? undefined,
-      req.header('x-api-key') ?? undefined
-    );
+        if (provided === undefined) {
+          if (byKey.size === 0) {
+            next(
+              new AppError(
+                'MISCONFIGURED',
+                'El servidor no tiene CORECHECK_API_KEY configurada.',
+                503
+              )
+            );
+            return;
+          }
+          next(
+            new AppError(
+              'UNAUTHORIZED',
+              'API key ausente o inválida. Use Authorization: Bearer <key> o X-API-Key.',
+              401
+            )
+          );
+          return;
+        }
 
-    if (provided === undefined) {
-      next(
-        new AppError(
-          'UNAUTHORIZED',
-          'API key ausente o inválida. Use Authorization: Bearer <key> o X-API-Key.',
-          401
-        )
-      );
-      return;
-    }
+        const fromEnv = byKey.get(provided);
+        if (fromEnv !== undefined) {
+          req.accountId = fromEnv;
+          next();
+          return;
+        }
 
-    const accountId = byKey.get(provided);
-    if (accountId === undefined) {
-      next(
-        new AppError(
-          'UNAUTHORIZED',
-          'API key ausente o inválida. Use Authorization: Bearer <key> o X-API-Key.',
-          401
-        )
-      );
-      return;
-    }
+        const lookup = await apiKeyRepository.findActiveByKeyHash(
+          hashApiKey(provided)
+        );
+        if (lookup) {
+          req.accountId = lookup.accountId;
+          next();
+          return;
+        }
 
-    req.accountId = accountId;
-    next();
+        next(
+          new AppError(
+            'UNAUTHORIZED',
+            'API key ausente o inválida. Use Authorization: Bearer <key> o X-API-Key.',
+            401
+          )
+        );
+      } catch (error) {
+        next(error);
+      }
+    })();
   };
 }

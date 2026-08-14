@@ -30,5 +30,25 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE INDEX IF NOT EXISTS idx_reports_account_id ON reports (account_id);
 CREATE INDEX IF NOT EXISTS idx_reports_account_created_at ON reports (account_id, created_at DESC);
 `
+  },
+  {
+    id: '002_api_keys.sql',
+    sql: `
+CREATE TABLE IF NOT EXISTS api_keys (
+  id UUID PRIMARY KEY,
+  account_id VARCHAR(128) NOT NULL,
+  key_hash VARCHAR(64) NOT NULL,
+  key_prefix VARCHAR(16) NOT NULL,
+  label VARCHAR(256),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_api_keys_key_hash ON api_keys (key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_account_id ON api_keys (account_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_active_hash
+  ON api_keys (key_hash)
+  WHERE revoked_at IS NULL;
+`
   }
 ];

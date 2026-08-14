@@ -41,7 +41,13 @@ function createMockPool() {
       if (sql.includes('CREATE TABLE IF NOT EXISTS reports')) {
         return { rowCount: 0, rows: [] };
       }
+      if (sql.includes('CREATE TABLE IF NOT EXISTS api_keys')) {
+        return { rowCount: 0, rows: [] };
+      }
       if (sql.includes('CREATE INDEX IF NOT EXISTS')) {
+        return { rowCount: 0, rows: [] };
+      }
+      if (sql.includes('CREATE UNIQUE INDEX IF NOT EXISTS')) {
         return { rowCount: 0, rows: [] };
       }
 
@@ -154,6 +160,7 @@ describe('PostgresReportsRepository (Phase 3.2 mocked)', () => {
   it('runMigrations es idempotente sobre el mock', async () => {
     const applied1 = await runMigrations(pool);
     assert.ok(applied1.includes('001_reports.sql'));
+    assert.ok(applied1.includes('002_api_keys.sql'));
     const applied2 = await runMigrations(pool);
     assert.deepEqual(applied2, []);
   });
