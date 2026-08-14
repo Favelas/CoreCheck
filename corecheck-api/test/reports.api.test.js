@@ -26,6 +26,31 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
     assert.equal(res.json.status, 'ok');
     assert.equal(res.json.service, 'Corecheck API');
     assert.ok(typeof res.json.timestamp === 'string');
+    assert.equal(typeof res.json.uptimeSeconds, 'number');
+    assert.equal(res.json.persistence, 'memory');
+    assert.ok(res.json.version);
+  });
+
+  it('GET /metrics → 200 snapshot sin PII', async () => {
+    await api(server.baseUrl, 'GET', '/api/reports');
+    const res = await api(server.baseUrl, 'GET', '/metrics', undefined, {
+      auth: false
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.service, 'Corecheck API');
+    assert.equal(typeof res.json.metrics.requestsTotal, 'number');
+    assert.ok(res.json.metrics.requestsTotal >= 1);
+    assert.equal(typeof res.json.metrics.errors5xx, 'number');
+  });
+
+  it('GET /viewer/ → 200 HTML (Report Viewer, sin API key)', async () => {
+    const res = await fetch(`${server.baseUrl}/viewer/`);
+    assert.equal(res.status, 200);
+    const ct = res.headers.get('content-type') || '';
+    assert.match(ct, /text\/html/i);
+    const html = await res.text();
+    assert.match(html, /CoreCheck/i);
+    assert.match(html, /Report Viewer/i);
   });
 
   it('GET /api/reports sin API key → 401 UNAUTHORIZED', async () => {

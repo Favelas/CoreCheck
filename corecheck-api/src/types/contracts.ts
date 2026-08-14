@@ -79,4 +79,21 @@ export interface HealthResponse {
   readonly status: 'ok';
   readonly service: string;
   readonly timestamp: string;
+  readonly uptimeSeconds: number;
+  readonly persistence: string;
+  readonly version: string;
+}
+
+/** GET /metrics — sin PII. */
+export interface MetricsResponse {
+  readonly service: string;
+  readonly metrics: {
+    readonly startedAt: string;
+    readonly uptimeSeconds: number;
+    readonly requestsTotal: number;
+    readonly requestsByStatus: Readonly<Record<string, number>>;
+    readonly errors5xx: number;
+    readonly rateLimited: number;
+    readonly avgLatencyMs: number;
+  };
 }

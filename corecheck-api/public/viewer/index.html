@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CoreCheck — Report Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+    <main class="shell">
+      <header class="brand-block">
+        <p class="brand">CoreCheck</p>
+        <h1>Report Viewer</h1>
+        <p class="lede">
+          Local console over the authenticated Control Plane. Keys stay in
+          sessionStorage — never in the URL.
+        </p>
+      </header>
+
+      <section class="auth" aria-label="API authentication">
+        <label for="apiKey">API key</label>
+        <div class="auth-row">
+          <input
+            id="apiKey"
+            name="apiKey"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="cc_…"
+          />
+          <button type="button" id="btnConnect">Connect</button>
+          <button type="button" id="btnClear" class="ghost">Clear</button>
+        </div>
+        <p id="authStatus" class="status" role="status"></p>
+      </section>
+
+      <section class="workspace" hidden id="workspace">
+        <div class="toolbar">
+          <h2>Reports</h2>
+          <button type="button" id="btnRefresh" class="ghost">Refresh</button>
+        </div>
+        <p id="listMeta" class="meta"></p>
+        <ul id="reportList" class="report-list"></ul>
+        <article id="detail" class="detail" hidden>
+          <div class="detail-head">
+            <h2 id="detailTitle">Report</h2>
+            <button type="button" id="btnVerify" class="ghost">Verify integrity</button>
+          </div>
+          <pre id="detailBody" class="detail-body"></pre>
+          <p id="verifyStatus" class="status" role="status"></p>
+        </article>
+      </section>
+    </main>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

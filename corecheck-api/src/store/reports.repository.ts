@@ -19,6 +19,8 @@ export interface ReportsRepository {
     accountId: string
   ): Promise<CoreCheckReport | undefined>;
   clear(): Promise<void>;
+  /** Borra reportes con createdAt < olderThanIso. Retorna cantidad eliminada. */
+  purgeOlderThan(olderThanIso: string): Promise<number>;
 }
 
 /** Extensión solo para tests de integridad (tampering). */

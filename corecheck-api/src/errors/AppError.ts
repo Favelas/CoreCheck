@@ -9,6 +9,7 @@ export type AppErrorCode =
   | 'NOT_FOUND'
   | 'UNAUTHORIZED'
   | 'MISCONFIGURED'
+  | 'RATE_LIMITED'
   | 'INTERNAL_ERROR';
 
 

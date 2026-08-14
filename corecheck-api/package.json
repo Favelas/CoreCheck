@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/reports.api.test.js test/report_integrity.test.js test/persistence.file.test.js test/postgres.repository.test.js",
+    "test": "node --import tsx --test test/reports.api.test.js test/report_integrity.test.js test/persistence.file.test.js test/postgres.repository.test.js test/observability.test.js",
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "prestart": "npm run build"
   },

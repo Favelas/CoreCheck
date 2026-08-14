@@ -90,6 +90,18 @@ function createMockPool() {
         return { rowCount: 1, rows: [row] };
       }
 
+      if (sql.startsWith('DELETE FROM reports WHERE created_at')) {
+        const cutoff = params[0];
+        let removed = 0;
+        for (const [id, row] of [...byId.entries()]) {
+          if (String(row.created_at) < String(cutoff)) {
+            byId.delete(id);
+            removed += 1;
+          }
+        }
+        return { rowCount: removed, rows: [] };
+      }
+
       if (sql.startsWith('DELETE FROM reports')) {
         byId.clear();
         return { rowCount: 0, rows: [] };

@@ -77,6 +77,18 @@ export class JsonFileReportsStore implements ReportsRepository {
     this.persistToDisk();
   }
 
+  async purgeOlderThan(olderThanIso: string): Promise<number> {
+    const before = this._reports.length;
+    this._reports = this._reports.filter(
+      (item) => item.createdAt >= olderThanIso
+    );
+    const removed = before - this._reports.length;
+    if (removed > 0) {
+      this.persistToDisk();
+    }
+    return removed;
+  }
+
   private loadFromDisk(): void {
     const dir = path.dirname(this.filePath);
     if (!fs.existsSync(dir)) {

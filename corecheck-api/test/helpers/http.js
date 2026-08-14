@@ -21,6 +21,7 @@ function startTestServer(options = {}) {
     options.app ??
     createApp({
       repository,
+      disableRateLimit: true,
       apiKeyBindings: [
         { key: TEST_API_KEY, accountId: TEST_ACCOUNT_ID },
         { key: TENANT_ALPHA_KEY, accountId: TENANT_ALPHA_ID },

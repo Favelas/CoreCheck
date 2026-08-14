@@ -6,10 +6,13 @@
  * Datos file: CORECHECK_DATA_DIR (default ./data)
  * Postgres: DATABASE_URL o POSTGRES_* + npm run db:migrate
  * HMAC opcional: CORECHECK_REPORT_HMAC_SECRET
+ * Retention: CORECHECK_RETENTION_DAYS (>0 purga al boot)
+ * Viewer: http://localhost:$PORT/viewer/
  */
 import { createApp } from './src/app';
 import { createPoolFromEnv } from './src/db/pool';
 import { runMigrations } from './src/db/migrate';
+import { runRetentionPurge } from './src/ops/retention';
 import { parseApiKeyBindingsFromEnv } from './src/security/apiKeys';
 
 async function main(): Promise<void> {
@@ -47,6 +50,11 @@ async function main(): Promise<void> {
         : 'file';
 
   const app = createApp({ persistence: mode });
+
+  const purged = await runRetentionPurge();
+  if (purged > 0) {
+    console.log(`[CoreCheck API] retention purge: ${purged} report(s)`);
+  }
 
   app.listen(PORT, () => {
     console.log(

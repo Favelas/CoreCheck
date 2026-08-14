@@ -78,6 +78,14 @@ export class InMemoryReportsStore
     this._reports = [];
   }
 
+  async purgeOlderThan(olderThanIso: string): Promise<number> {
+    const before = this._reports.length;
+    this._reports = this._reports.filter(
+      (item) => item.createdAt >= olderThanIso
+    );
+    return before - this._reports.length;
+  }
+
   private cloneFindings(
     findings: ReadonlyArray<Vulnerability>
   ): ReadonlyArray<Vulnerability> {

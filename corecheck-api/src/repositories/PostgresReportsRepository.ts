@@ -96,6 +96,14 @@ export class PostgresReportsRepository implements ReportsRepository {
     await this.pool.query('DELETE FROM reports');
   }
 
+  async purgeOlderThan(olderThanIso: string): Promise<number> {
+    const result = await this.pool.query(
+      'DELETE FROM reports WHERE created_at < $1::timestamptz',
+      [olderThanIso]
+    );
+    return result.rowCount ?? 0;
+  }
+
   private mapRow(row: ReportRow): CoreCheckReport {
     const payload =
       typeof row.payload === 'string'

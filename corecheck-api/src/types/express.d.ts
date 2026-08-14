@@ -11,6 +11,8 @@ declare global {
       validatedReport?: CreateReportInput;
       /** Tenant resuelto desde la API key (Fase 1.2). */
       accountId?: string;
+      /** Correlación de request (Fase 4.1). */
+      requestId?: string;
     }
   }
 }
