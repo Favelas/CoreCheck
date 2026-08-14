@@ -2,13 +2,14 @@
   "name": "corecheck-api",
   "version": "1.0.0",
   "description": "CoreCheck Control Plane — report ingestion API (enterprise layered Express)",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
-    "start": "node --import tsx index.js",
     "dev": "nodemon",
-    "test": "node --import tsx --test test/reports.api.test.js",
+    "build": "tsc",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "test": "node --import tsx --test test/reports.api.test.js",
+    "prestart": "npm run build"
   },
   "keywords": [
     "corecheck",

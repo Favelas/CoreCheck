@@ -1,12 +1,13 @@
 import type { RequestHandler } from 'express';
 import { AppError } from '../errors/AppError';
+import { isDeniedIngestField } from '../security/sensitiveFields';
 import type { CreateReportInput } from '../types/contracts';
 
 /**
- * Valida body de POST /api/reports y normaliza el payload.
- * - Rechaza null / array / no-objeto / {}.
- * - Elimina id y createdAt del cliente (el servidor es dueño de la identidad).
- * - Adjunta CreateReportInput en req.validatedReport (ver express.d.ts).
+ * Valida y sanitiza body de POST /api/reports.
+ * - Objeto JSON no vacío.
+ * - `url` obligatorio (string no vacío).
+ * - Strip de id/createdAt y denylist de secretos (SEC-API-01).
  */
 export const validateReportBody: RequestHandler = (req, _res, next) => {
   const body: unknown = req.body;
@@ -29,21 +30,27 @@ export const validateReportBody: RequestHandler = (req, _res, next) => {
     return;
   }
 
-  const { id: _ignoreId, createdAt: _ignoreCreatedAt, ...safePayload } = record;
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (isDeniedIngestField(key)) {
+      continue;
+    }
+    sanitized[key] = value;
+  }
 
-  if (Object.keys(safePayload).length === 0) {
+  const url = sanitized['url'];
+  if (typeof url !== 'string' || url.trim() === '') {
     next(
       new AppError(
         'BAD_REQUEST',
-        'El body debe incluir al menos un campo de negocio (ej. url, findings).',
+        'El campo url es obligatorio y debe ser un string no vacío.',
         400
       )
     );
     return;
   }
 
-  // Sanitizado estructuralmente; el schema completo (url obligatorio, etc.)
-  // se endurece en una iteración de contrato dedicada + tests nuevos.
-  req.validatedReport = safePayload as CreateReportInput;
+  sanitized['url'] = url.trim();
+  req.validatedReport = sanitized as CreateReportInput;
   next();
 };

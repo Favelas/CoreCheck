@@ -1,12 +1,10 @@
-'use strict';
-
 /**
  * Entry point — solo bootstrap HTTP.
- * La composición de middlewares/rutas vive en src/app.js.
+ * La composición de middlewares/rutas vive en src/app.ts.
  */
-const { createApp } = require('./src/app');
+import { createApp } from './src/app';
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env['PORT']) || 3000;
 const app = createApp();
 
 app.listen(PORT, () => {

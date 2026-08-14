@@ -66,6 +66,56 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
     assert.ok(res.json.message);
   });
 
+  it('POST sin url → 400 BAD_REQUEST', async () => {
+    const res = await api(server.baseUrl, 'POST', '/api/reports', {
+      failOn: 'HIGH',
+      findingsCount: 1
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error, 'BAD_REQUEST');
+    assert.match(String(res.json.message), /url/i);
+  });
+
+  it('POST con apiKey → 201 y secreto no se persiste ni se reexpone (SEC-API-01)', async () => {
+    const created = await api(server.baseUrl, 'POST', '/api/reports', {
+      url: 'https://example.com',
+      apiKey: 'secret123',
+      authorization: 'Bearer sk-live-test',
+      password: 'p@ss',
+      token: 'tok',
+      secret: 'sec',
+      cookie: 'session=abc',
+      summary: 'safe-field'
+    });
+
+    assert.equal(created.status, 201);
+    assert.equal(created.json.url, 'https://example.com');
+    assert.equal(created.json.summary, 'safe-field');
+    assert.equal(created.json.apiKey, undefined);
+    assert.equal(created.json.authorization, undefined);
+    assert.equal(created.json.password, undefined);
+    assert.equal(created.json.token, undefined);
+    assert.equal(created.json.secret, undefined);
+    assert.equal(created.json.cookie, undefined);
+    assert.equal(Object.hasOwn(created.json, 'apiKey'), false);
+
+    const byId = await api(
+      server.baseUrl,
+      'GET',
+      `/api/reports/${created.json.id}`
+    );
+    assert.equal(byId.status, 200);
+    assert.equal(byId.json.apiKey, undefined);
+    assert.equal(Object.hasOwn(byId.json, 'apiKey'), false);
+
+    const list = await api(server.baseUrl, 'GET', '/api/reports');
+    assert.equal(list.status, 200);
+    const row = list.json.data.find((r) => r.id === created.json.id);
+    assert.ok(row);
+    assert.equal(row.apiKey, undefined);
+    assert.equal(Object.hasOwn(row, 'apiKey'), false);
+  });
+
   it('GET /api/reports/:id → 200 happy path', async () => {
     const created = await api(server.baseUrl, 'POST', '/api/reports', {
       url: 'https://example.com'
