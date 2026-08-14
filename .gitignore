@@ -16,3 +16,10 @@ screenshots/
 
 # Cache del sistema
 .DS_Store
+
+# Postman local workspace (VS Code / agent) — usar solo *.postman_collection.json
+**/.postman/
+**/postman/**/.resources/
+**/postman/**/*.request.yaml
+**/postman/**/*.resources.yaml
+**/postman/**/workspace.globals.yaml

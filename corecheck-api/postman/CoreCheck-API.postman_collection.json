@@ -1,0 +1,99 @@
+{
+  "info": {
+    "name": "CoreCheck API - Fase A",
+    "description": "Contratos HTTP de corecheck-api (health, reports CRUD parcial).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "reportId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/"
+      }
+    },
+    {
+      "name": "02 List reports",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/reports"
+      }
+    },
+    {
+      "name": "03 Create report - example.com",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 201) {",
+              "  const json = pm.response.json();",
+              "  if (json.id) { pm.collectionVariables.set('reportId', json.id); }",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"url\": \"https://example.com\",\n  \"failOn\": \"HIGH\",\n  \"findingsCount\": 2,\n  \"summary\": \"Prueba Postman Fase A - example.com\"\n}"
+        },
+        "url": "{{baseUrl}}/api/reports"
+      }
+    },
+    {
+      "name": "05 Get report by id",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/reports/{{reportId}}"
+      }
+    },
+    {
+      "name": "06 Get report 404",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/reports/00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "name": "07 Create empty body",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": "{{baseUrl}}/api/reports"
+      }
+    }
+  ]
+}
