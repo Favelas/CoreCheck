@@ -50,9 +50,9 @@ Eso es una brecha de **go-to-market y activación**, no de invención. El riesgo
 
 | Si invertimos en… | Efecto comercial | Dependencia |
 | :--- | :--- | :--- |
-| Encender upload en el template CI + un secret `CORECHECK_API_URL` | El Viewer deja de ser teatro: cada PR llena el historial | Slice 1 (prioridad #1) |
-| `CORECHECK_PERSISTENCE=postgres` en staging (Neon/Supabase) | Keys y reportes sobreviven deploys; se puede rotar tenants | Slice 2 |
-| Narrativa comercial actualizada (playbook + demo script) | Sales deja de vender “solo CLI” | Docs, no código |
+| Encender upload en el template CI + un secret `CORECHECK_API_URL` | El Viewer deja de ser teatro: cada PR llena el historial | **Hecho en template** — falta deploy staging del vendedor ([`docs/STAGING_DEPLOY.md`](./docs/STAGING_DEPLOY.md)) |
+| `CORECHECK_PERSISTENCE=postgres` en staging (Neon/Supabase) | Keys y reportes sobreviven deploys; se puede rotar tenants | Scaffold Fly/Render listo — falta `fly deploy` / Blueprint |
+| Narrativa comercial actualizada (playbook + demo script) | Sales deja de vender “solo CLI” | [`docs/DEMO_SCRIPT.md`](./docs/DEMO_SCRIPT.md) |
 | Webhooks desde la API / GitHub Checks | Nice-to-have post-primer-contrato | Slice 4 — **después** del flywheel |
 
 ---
@@ -162,7 +162,8 @@ Una demo se puede agendar cuando **todos** estos checks son verdaderos en el amb
 - [ ] Un run con hallazgo ≥ `--fail-on HIGH` sale `ExitCode.GATE_FAIL` (1) y el Viewer muestra `gateFailed`.  
 - [ ] Webhook CLI opcional (`--webhook-url`) notifica Slack/Teams — demostrable, no bloqueante.  
 - [ ] Narrativa verbal alineada: “Quality Gate + historial tenant”, no “vamos a construir el dashboard”.  
-- [ ] Playbook comercial actualizado (dejar de listar el dashboard como out-of-scope).
+- [ ] Playbook comercial actualizado (Viewer + upload ya no son “out of scope”).  
+- [ ] Scaffold deploy listo (`corecheck-api/Dockerfile`, `fly.toml`, `docs/STAGING_DEPLOY.md`) — **falta** el `fly deploy` / Blueprint del ambiente del vendedor.
 
 ### Definition of Done — listo para primer Design Partner (contrato)
 

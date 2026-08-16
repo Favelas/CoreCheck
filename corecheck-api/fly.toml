@@ -1,0 +1,40 @@
+# Fly.io — staging lean. Rename `app` if the name is taken:
+#   fly apps create corecheck-api-<you>
+#   # then set app = 'corecheck-api-<you>'
+#
+# Deploy from this directory:
+#   fly secrets set CORECHECK_API_KEY=... DATABASE_URL=... CORECHECK_PERSISTENCE=postgres CORECHECK_REPORT_HMAC_SECRET=...
+#   fly deploy
+#
+# See docs/STAGING_DEPLOY.md
+
+app = 'corecheck-api'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  NODE_ENV = 'production'
+  CORECHECK_PERSISTENCE = 'postgres'
+  PORT = '3000'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [[http_service.checks]]
+    interval = '15s'
+    timeout = '5s'
+    grace_period = '25s'
+    method = 'GET'
+    path = '/'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1

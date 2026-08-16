@@ -185,7 +185,7 @@ Estado anclado al código del 2026-08-15 — no a un backlog teórico.
 - `buildCreateReportInput(AuditReportBundle)` + `maybeUploadAuditReport` (soft-fail default; `NETWORK` si `--upload-strict`).  
 - Tests: `test/reports_client.test.ts`.
 
-**Pendiente de producto:** convertir el upload de *opt-in* a camino canónico de CI de pago (template cliente + secretos), y unificar la URL del License Plane con la del Reports Plane para no tener dos “api.corecheck.app” conceptuales.
+**Pendiente de producto:** desplegar staging del vendedor ([`docs/STAGING_DEPLOY.md`](./docs/STAGING_DEPLOY.md)), configurar secrets `CORECHECK_API_URL` + key en el cliente, y unificar License Plane + Reports Plane (hoy el template usa `--skip-license` cuando hay upload salvo `CORECHECK_REQUIRE_LICENSE=true`).
 
 ### Slice 2 — Plataforma: Postgres + API Keys dinámicas (**adaptadores listos; activación prod pendiente**)
 

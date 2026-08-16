@@ -71,12 +71,15 @@ Copia la **plantilla de cliente** (no el soft self-check del repo producto):
 | Tipo | Nombre | Ejemplo / notas |
 | :--- | :--- | :--- |
 | Variable | `CORECHECK_TARGET_URL` | `https://staging.cliente.com` (**obligatoria**) |
+| Variable | `CORECHECK_VIEWER_URL` | URL del Audit Dashboard (link en comentario de PR) |
+| Variable | `CORECHECK_REQUIRE_LICENSE` | `true` solo si usas License Plane; con upload SaaS suele omitirse |
 | Variable | `CORECHECK_ENGINE_REPO` | default `Favelas/CoreCheck` |
 | Variable | `CORECHECK_ENGINE_REF` | pin de release (`v1.0.0`); default `main` hasta taggear |
 | Variable | `CORECHECK_MAX_PAGES` | default `10` |
-| Variable | `CORECHECK_CONCURRENCY` | default `2` (runners pequeños GHA: preferir `1`; hay auto-cap ≤2) |
-| Secret | `CORECHECK_API_KEY` | comercial; sin él el gate avisa y usa `--skip-license` (solo PoC) |
-| Secret | `CORECHECK_ATTESTATION_SECRET` | opcional; habilita verify HMAC |
+| Variable | `CORECHECK_CONCURRENCY` | default `1` (runners GHA pequeños) |
+| Secret | `CORECHECK_API_KEY` | Key de tenant Control Plane (y/o licencia) |
+| Secret | `CORECHECK_API_URL` | Base URL del Control Plane → activa `--upload` (soft-fail) |
+| Secret | `CORECHECK_ATTESTATION_SECRET` | opcional; habilita verify HMAC del JSON local |
 | Secret | `CORECHECK_ENGINE_TOKEN` | solo si el motor es repo privado |
 
 ### 2.4 Cómo se define la URL objetivo
@@ -124,19 +127,24 @@ Tras un run exitoso deberías ver:
 
 | Secret | ¿Obligatorio? | Para qué |
 | :--- | :---: | :--- |
-| `CORECHECK_API_KEY` | Recomendado en prod | Licencia comercial CoreCheck |
-| `CORECHECK_WEBHOOK_SECRET` | Opcional | Firma HMAC de webhooks |
+| `CORECHECK_API_URL` | **Sí** para SaaS / historial | Base URL Control Plane; sin ella solo hay artefacto local |
+| `CORECHECK_API_KEY` | **Sí** con upload | Tenant key (`Bearer` / `X-API-Key`) |
+| `CORECHECK_ATTESTATION_SECRET` | Opcional | Verify HMAC del `findings.json` |
+| `CORECHECK_WEBHOOK_SECRET` | Opcional | Firma HMAC de webhooks CLI |
 | `JIRA_API_TOKEN` (+ domain/email vía vars) | Opcional | Tickets Jira Cloud |
 | Credenciales Azure / GitLab | Opcional | Boards / Issues |
 
-> Si **no** hay `CORECHECK_API_KEY`, el workflow de referencia puede usar `--skip-license` (útil en PoC). En clientes de pago, **siempre** configura la API key.
+> Con `CORECHECK_API_URL`, el template activa `--upload` y, por defecto, `--skip-license` (License Plane y Reports Plane aún son procesos distintos). Para forzar licencia: `vars.CORECHECK_REQUIRE_LICENSE=true`.  
+> Deploy del API del vendedor: [`STAGING_DEPLOY.md`](./STAGING_DEPLOY.md). Demo 10 min: [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md).
 
 ### 3.3 Checklist de secrets (QA Lead)
 
 | Paso | Hecho |
 | :--- | :---: |
 | Abrí Settings → Secrets and variables → Actions | ☐ |
-| Creé `CORECHECK_API_KEY` (si el cliente tiene licencia) | ☐ |
+| Creé `CORECHECK_API_URL` (staging Fly/Render del vendedor) | ☐ |
+| Creé `CORECHECK_API_KEY` (tenant demo o mintada) | ☐ |
+| Opcional: `vars.CORECHECK_VIEWER_URL` | ☐ |
 | Verifiqué que el nombre del secret coincide **exactamente** con el del YAML | ☐ |
 | No pegué secretos en el chat del PR ni en el código | ☐ |
 

@@ -58,10 +58,11 @@ async function main(): Promise<void> {
 
   // Mantener el event loop vivo (evita "clean exit" inmediato con tsx/nodemon).
   await new Promise<void>((resolve, reject) => {
-    const server = app.listen(PORT);
+    // 0.0.0.0: requerido en contenedores (Fly/Render); en local sigue siendo localhost.
+    const server = app.listen(PORT, '0.0.0.0');
     server.once('listening', () => {
       console.log(
-        `[CoreCheck API] Servidor ejecutándose en http://localhost:${PORT}`
+        `[CoreCheck API] Servidor ejecutándose en http://0.0.0.0:${PORT}`
       );
     });
     server.once('error', (err: NodeJS.ErrnoException) => {

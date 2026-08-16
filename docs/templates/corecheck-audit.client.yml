@@ -15,9 +15,15 @@
 # Requisitos (Settings → Secrets and variables):
 #   Variables:
 #     CORECHECK_TARGET_URL   = https://staging.cliente.com
+#     CORECHECK_VIEWER_URL   = https://<api>/viewer/   (opcional, link en PR)
+#     CORECHECK_REQUIRE_LICENSE = true                 (opcional; default off si hay upload)
 #   Secrets (recomendados):
-#     CORECHECK_API_KEY
-#     CORECHECK_ATTESTATION_SECRET  (opcional, HMAC)
+#     CORECHECK_API_KEY              — tenant Control Plane (y/o licencia)
+#     CORECHECK_API_URL              — base URL Control Plane (activa --upload)
+#     CORECHECK_ATTESTATION_SECRET   (opcional, HMAC local del JSON)
+#
+# Con CORECHECK_API_URL: el gate publica POST /api/reports (soft-fail; no tumba un PASS).
+# Deploy del API: docs/STAGING_DEPLOY.md · demo: docs/DEMO_SCRIPT.md
 # =============================================================================
 name: CoreCheck Quality Gate
 
@@ -112,12 +118,29 @@ jobs:
           MAX_PAGES: ${{ steps.policy.outputs.max_pages }}
           CONCURRENCY: ${{ steps.policy.outputs.concurrency }}
           CORECHECK_API_KEY: ${{ secrets.CORECHECK_API_KEY }}
+          CORECHECK_API_URL: ${{ secrets.CORECHECK_API_URL }}
           CORECHECK_ATTESTATION_SECRET: ${{ secrets.CORECHECK_ATTESTATION_SECRET }}
+          CORECHECK_REQUIRE_LICENSE: ${{ vars.CORECHECK_REQUIRE_LICENSE }}
         run: |
           set +e
           mkdir -p audit-results
           EXTRA_FLAGS=()
-          if [ -z "${CORECHECK_API_KEY}" ]; then
+
+          # Upload al Control Plane (camino comercial SaaS). Soft-fail por defecto.
+          if [ -n "${CORECHECK_API_URL:-}" ]; then
+            if [ -z "${CORECHECK_API_KEY:-}" ]; then
+              echo "::error::CORECHECK_API_URL set but CORECHECK_API_KEY missing"
+              echo "exit_code=2" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            EXTRA_FLAGS+=(--upload --upload-url "${CORECHECK_API_URL}")
+            echo "Upload enabled → ${CORECHECK_API_URL}"
+            # Dual-plane hoy: key de reports ≠ License Plane. Skip license salvo opt-in.
+            if [ "${CORECHECK_REQUIRE_LICENSE:-}" != "true" ]; then
+              EXTRA_FLAGS+=(--skip-license)
+              echo "License Plane skipped (set vars.CORECHECK_REQUIRE_LICENSE=true to enforce)"
+            fi
+          elif [ -z "${CORECHECK_API_KEY:-}" ]; then
             EXTRA_FLAGS+=(--skip-license)
             echo "::warning::CORECHECK_API_KEY not set; using --skip-license (solo PoC)"
           fi
@@ -183,6 +206,9 @@ jobs:
 
       - name: Build PR Markdown Summary
         if: always()
+        env:
+          CORECHECK_API_URL: ${{ secrets.CORECHECK_API_URL }}
+          CORECHECK_VIEWER_URL: ${{ vars.CORECHECK_VIEWER_URL }}
         run: |
           mkdir -p audit-results
           SUMMARY="audit-results/summary.md"
@@ -202,6 +228,12 @@ jobs:
             echo "- **Fail-on:** \`${{ steps.policy.outputs.fail_on }}\`"
             echo "- **Exit:** \`${code}\` (${label})"
             echo "- **Artifacts OK:** \`${{ steps.artifacts.outputs.artifacts_ok || 'n/a' }}\`"
+            if [ -n "${CORECHECK_VIEWER_URL:-}" ]; then
+              echo "- **Viewer:** ${CORECHECK_VIEWER_URL}"
+            fi
+            if [ -n "${CORECHECK_API_URL:-}" ]; then
+              echo "- **Ingest:** Control Plane upload enabled (soft-fail)"
+            fi
             echo
             echo "| Code | Meaning |"
             echo "| ---: | :--- |"

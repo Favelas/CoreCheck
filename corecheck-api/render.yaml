@@ -1,0 +1,30 @@
+# Render Blueprint — alternative to Fly.
+# From repo root or this folder: create Blueprint and point at this file.
+# Set secret env vars in the Render dashboard (sync: false).
+#
+# See docs/STAGING_DEPLOY.md
+
+services:
+  - type: web
+    name: corecheck-api
+    runtime: docker
+    rootDir: corecheck-api
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: '3000'
+      - key: CORECHECK_PERSISTENCE
+        value: postgres
+      - key: CORECHECK_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: CORECHECK_REPORT_HMAC_SECRET
+        sync: false
+      - key: CORECHECK_RETENTION_DAYS
+        value: '90'

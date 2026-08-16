@@ -16,16 +16,17 @@
 | PR Gate en GitHub Actions | Alta | Plantilla cliente + artefactos obligatorios |
 | SARIF → Code Scanning + PDF ejecutivo firmado | Alta | HMAC opcional con secret del cliente |
 | Auth vía `storageState` o Bearer header | Media-Alta | Receta soportada en v1.0 |
+| Historial tenant + Viewer (`/viewer/` trends/diff) | Alta | Requiere `--upload` + staging API ([STAGING_DEPLOY](./STAGING_DEPLOY.md)) |
 
 ### No — fuera de alcance v1.0 (no prometer)
 
 - MFA / Captcha / SSO interactivo SAML-OIDC — **pendiente a propósito** (ver [ENTERPRISE §4.1](./ENTERPRISE_SCALING_GUIDE.md)): CI no-determinista + riesgo de secrets 2FA; usar `--auth-state` post-login humano
-- Dashboard SaaS multi-tenant
+- SSO para operadores del Viewer / GitHub Checks API / webhooks originados en la API (Slice 4–5)
 - DAST ofensivo profundo / pentest sustituto
 - Marketplace Action oficial (roadmap v1.1)
 - Apps SPA sin ningún ancla descubrible y sin `data-*` / hash routes (cobertura limitada)
 
-Script de objeción: *“CoreCheck es el Quality Gate unificado de release; no reemplaza un pentest ni un IdP. Cubre el 80% del ruido de calidad digital en cada PR.”*
+Script de objeción: *“CoreCheck es el Quality Gate unificado de release con historial por tenant; no reemplaza un pentest ni un IdP. Cubre el 80% del ruido de calidad digital en cada PR.”*
 
 ---
 

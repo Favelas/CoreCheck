@@ -16,6 +16,25 @@ npm run dev
 - Reports: `Authorization: Bearer cc_dev_local` en `/api/reports`
 - Admin keys: `POST/GET/DELETE /api/admin/api-keys` (mint / list / revoke)
 
+## Staging lean (Fly / Render + Neon)
+
+Scaffold listo en este directorio:
+
+| Archivo | Uso |
+| :--- | :--- |
+| `Dockerfile` | Imagen multi-stage Node 20 |
+| `fly.toml` | Fly.io (auto-stop, health `GET /`) |
+| `render.yaml` | Blueprint Render alternativo |
+| `../docs/STAGING_DEPLOY.md` | Pasos Neon + secrets + smoke |
+| `../docs/DEMO_SCRIPT.md` | Demo Design Partner 10 min |
+
+```powershell
+fly secrets set CORECHECK_API_KEY=... DATABASE_URL=... CORECHECK_PERSISTENCE=postgres CORECHECK_REPORT_HMAC_SECRET=...
+fly deploy
+```
+
+Migraciones SQL corren al boot cuando `CORECHECK_PERSISTENCE=postgres`.
+
 ## Variables de entorno
 
 | Variable | Rol |
