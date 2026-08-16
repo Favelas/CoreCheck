@@ -56,10 +56,30 @@ async function main(): Promise<void> {
     console.log(`[CoreCheck API] retention purge: ${purged} report(s)`);
   }
 
-  app.listen(PORT, () => {
-    console.log(
-      `[CoreCheck API] Servidor ejecutándose en http://localhost:${PORT}`
-    );
+  // Mantener el event loop vivo (evita "clean exit" inmediato con tsx/nodemon).
+  await new Promise<void>((resolve, reject) => {
+    const server = app.listen(PORT);
+    server.once('listening', () => {
+      console.log(
+        `[CoreCheck API] Servidor ejecutándose en http://localhost:${PORT}`
+      );
+    });
+    server.once('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        reject(
+          new Error(
+            `Puerto ${PORT} en uso (EADDRINUSE). Cierra el otro proceso o usa otro PORT.`
+          )
+        );
+        return;
+      }
+      reject(err);
+    });
+    const shutdown = (): void => {
+      server.close(() => resolve());
+    };
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
   });
 }
 
