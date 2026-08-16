@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CoreCheck — Report Viewer</title>
+    <title>CoreCheck — Audit Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,10 +17,10 @@
     <main class="shell">
       <header class="brand-block">
         <p class="brand">CoreCheck</p>
-        <h1>Report Viewer</h1>
+        <h1>Audit Dashboard</h1>
         <p class="lede">
-          Local console over the authenticated Control Plane. Keys stay in
-          sessionStorage — never in the URL.
+          Historial, filtros y diffs sobre el Control Plane autenticado. La API
+          key vive en sessionStorage — nunca en la URL.
         </p>
       </header>
 
@@ -42,12 +42,67 @@
       </section>
 
       <section class="workspace" hidden id="workspace">
+        <div class="filters" aria-label="Report filters">
+          <label>
+            URL contains
+            <input id="filterUrl" type="search" placeholder="example.com" />
+          </label>
+          <label>
+            Gate
+            <select id="filterGate">
+              <option value="">any</option>
+              <option value="true">FAIL</option>
+              <option value="false">PASS</option>
+            </select>
+          </label>
+          <label>
+            Search
+            <input id="filterQ" type="search" placeholder="id / summary" />
+          </label>
+          <button type="button" id="btnApplyFilters">Apply</button>
+          <button type="button" id="btnRefresh" class="ghost">Refresh</button>
+        </div>
+
+        <div class="stats" id="trendStats" hidden>
+          <div class="stat">
+            <span class="stat-label">Runs</span>
+            <span class="stat-value" id="statRuns">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Avg score</span>
+            <span class="stat-value" id="statAvg">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Δ score</span>
+            <span class="stat-value" id="statDelta">—</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Gate fail rate</span>
+            <span class="stat-value" id="statFailRate">—</span>
+          </div>
+        </div>
+
+        <div class="spark" id="sparkWrap" hidden>
+          <p class="meta">Quality score trend (oldest → newest)</p>
+          <div class="spark-bars" id="sparkBars" role="img" aria-label="Score trend"></div>
+        </div>
+
         <div class="toolbar">
           <h2>Reports</h2>
-          <button type="button" id="btnRefresh" class="ghost">Refresh</button>
+          <button type="button" id="btnDiff" class="ghost">Diff last 2</button>
         </div>
         <p id="listMeta" class="meta"></p>
         <ul id="reportList" class="report-list"></ul>
+
+        <article id="diffPanel" class="detail" hidden>
+          <div class="detail-head">
+            <h2>Diff</h2>
+            <button type="button" id="btnCloseDiff" class="ghost">Close</button>
+          </div>
+          <p id="diffSummary" class="meta"></p>
+          <pre id="diffBody" class="detail-body"></pre>
+        </article>
+
         <article id="detail" class="detail" hidden>
           <div class="detail-head">
             <h2 id="detailTitle">Report</h2>

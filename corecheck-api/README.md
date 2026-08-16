@@ -37,7 +37,12 @@ npm run dev
 
 En `postgres` las keys persisten en tabla `api_keys` (solo SHA-256). En `memory`/`file` el repo de keys es in-memory (reinicio = pierdes keys dinámicas; el bootstrap env sigue).
 
-## CLI upload (Slice 1)
+## Dashboard insights (Slice 3)
+
+- `GET /api/reports?url=&gateFailed=&failOn=&q=&since=&limit=`
+- `GET /api/reports/insights/trends?url=`
+- `GET /api/reports/insights/diff?url=` o `?baseId=&targetId=`
+- Viewer: `http://localhost:3000/viewer/` (filtros, sparkline, Diff last 2, deep-link `#reportId`)
 
 ```powershell
 $env:CORECHECK_UPLOAD="true"

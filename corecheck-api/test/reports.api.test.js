@@ -43,14 +43,14 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
     assert.equal(typeof res.json.metrics.errors5xx, 'number');
   });
 
-  it('GET /viewer/ → 200 HTML (Report Viewer, sin API key)', async () => {
+  it('GET /viewer/ → 200 HTML (Audit Dashboard, sin API key)', async () => {
     const res = await fetch(`${server.baseUrl}/viewer/`);
     assert.equal(res.status, 200);
     const ct = res.headers.get('content-type') || '';
     assert.match(ct, /text\/html/i);
     const html = await res.text();
     assert.match(html, /CoreCheck/i);
-    assert.match(html, /Report Viewer/i);
+    assert.match(html, /Audit Dashboard/i);
   });
 
   it('GET /api/reports sin API key → 401 UNAUTHORIZED', async () => {
@@ -302,5 +302,68 @@ describe('CoreCheck API — contratos HTTP (Fase B.5)', () => {
     assert.equal(verified.status, 200);
     assert.equal(verified.json.valid, false);
     assert.equal(verified.json.hashMatches, false);
+  });
+
+  it('GET /api/reports filtra por url (Slice 3)', async () => {
+    await api(server.baseUrl, 'POST', '/api/reports', {
+      url: 'https://alpha.example/',
+      summary: 'a'
+    });
+    await api(server.baseUrl, 'POST', '/api/reports', {
+      url: 'https://beta.example/',
+      summary: 'b'
+    });
+    const res = await api(
+      server.baseUrl,
+      'GET',
+      '/api/reports?url=alpha.example'
+    );
+    assert.equal(res.status, 200);
+    assert.ok(res.json.total >= 1);
+    assert.ok(res.json.data.every((r) => r.url.includes('alpha.example')));
+  });
+
+  it('insights/trends y insights/diff (Slice 3)', async () => {
+    await api(server.baseUrl, 'POST', '/api/reports', {
+      url: 'https://trend.example/',
+      findingsCount: 1,
+      digitalQualityScore: 60,
+      gateFailed: true,
+      findings: [
+        {
+          id: '1',
+          ruleId: 'R1',
+          title: 't',
+          severity: 'HIGH',
+          description: 'd'
+        }
+      ]
+    });
+    await api(server.baseUrl, 'POST', '/api/reports', {
+      url: 'https://trend.example/',
+      findingsCount: 0,
+      digitalQualityScore: 90,
+      gateFailed: false,
+      findings: []
+    });
+
+    const trends = await api(
+      server.baseUrl,
+      'GET',
+      '/api/reports/insights/trends?url=trend.example'
+    );
+    assert.equal(trends.status, 200);
+    assert.ok(trends.json.totalRuns >= 2);
+    assert.equal(typeof trends.json.gateFailRate, 'number');
+
+    const diff = await api(
+      server.baseUrl,
+      'GET',
+      '/api/reports/insights/diff?url=trend.example'
+    );
+    assert.equal(diff.status, 200);
+    assert.ok(diff.json.baseId);
+    assert.ok(diff.json.targetId);
+    assert.equal(typeof diff.json.regression, 'boolean');
   });
 });

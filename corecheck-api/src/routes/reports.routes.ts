@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import {
   createReport,
+  getDiff,
   getReportById,
+  getTrends,
   listReports,
   verifyReport
 } from '../controllers/reports.controller';
@@ -12,6 +14,10 @@ export const reportsRouter = Router();
 
 reportsRouter.get('/', asyncHandler(listReports));
 reportsRouter.post('/', validateReportBody, asyncHandler(createReport));
-// Ruta específica antes de GET /:id
+
+// Insights antes de /:id (Slice 3)
+reportsRouter.get('/insights/trends', asyncHandler(getTrends));
+reportsRouter.get('/insights/diff', asyncHandler(getDiff));
+
 reportsRouter.post('/:id/verify', asyncHandler(verifyReport));
 reportsRouter.get('/:id', asyncHandler(getReportById));

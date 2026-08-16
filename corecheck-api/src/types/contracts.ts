@@ -97,3 +97,46 @@ export interface MetricsResponse {
     readonly avgLatencyMs: number;
   };
 }
+
+/** Punto de serie temporal (Slice 3 dashboard). */
+export interface TrendPoint {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly url: string;
+  readonly digitalQualityScore: number | null;
+  readonly findingsCount: number;
+  readonly gateFailed: boolean | null;
+  readonly failOn: SeverityLevel | null;
+  readonly severityCounts: Partial<Record<SeverityLevel, number>>;
+}
+
+export interface TrendsResponse {
+  readonly totalRuns: number;
+  readonly urlFilter: string | null;
+  readonly gateFailRate: number;
+  readonly avgScore: number | null;
+  readonly scoreDelta: number | null;
+  readonly latest: TrendPoint | null;
+  readonly previous: TrendPoint | null;
+  readonly series: ReadonlyArray<TrendPoint>;
+}
+
+export interface FindingRef {
+  readonly ruleId: string;
+  readonly severity: SeverityLevel;
+  readonly title: string;
+}
+
+export interface ReportDiffResponse {
+  readonly baseId: string;
+  readonly targetId: string;
+  readonly baseCreatedAt: string;
+  readonly targetCreatedAt: string;
+  readonly url: string;
+  readonly scoreDelta: number | null;
+  readonly findingsCountDelta: number;
+  readonly added: ReadonlyArray<FindingRef>;
+  readonly removed: ReadonlyArray<FindingRef>;
+  readonly unchangedCount: number;
+  readonly regression: boolean;
+}
