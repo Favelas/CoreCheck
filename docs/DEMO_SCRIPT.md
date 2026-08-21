@@ -3,6 +3,11 @@
 **Meta:** el buyer ve *su* historial en `/viewer/`, no un ZIP de HTML.  
 Ancla: DoD de `EXECUTIVE.md` §5.
 
+> **Backlog + proyectos ficticios (ShopNova, AcmeCloud, …):**  
+> [`SHOWCASE_AND_DEMOS.md`](./SHOWCASE_AND_DEMOS.md) — esto es la **demo comercial**, no el repo de portafolio.
+
+**Staging actual (vendedor):** `https://corecheck-api.onrender.com` · Viewer: `/viewer/`
+
 ## Antes de la llamada (vendedor)
 
 - [ ] Staging API arriba (`GET /` → `status: ok`, `persistence: postgres`)
@@ -25,8 +30,8 @@ Ancla: DoD de `EXECUTIVE.md` §5.
 ## Comandos copy-paste (local → staging)
 
 ```powershell
-$API = "https://YOUR-APP.fly.dev"
-$KEY = "YOUR_BOOTSTRAP_KEY"
+$API = "https://corecheck-api.onrender.com"
+$KEY = "YOUR_BOOTSTRAP_KEY"   # tenant demo_sales — ver SHOWCASE_AND_DEMOS.md
 
 $env:CORECHECK_UPLOAD = "true"
 $env:CORECHECK_API_URL = $API

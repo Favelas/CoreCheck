@@ -185,7 +185,9 @@ Estado anclado al código del 2026-08-15 — no a un backlog teórico.
 - `buildCreateReportInput(AuditReportBundle)` + `maybeUploadAuditReport` (soft-fail default; `NETWORK` si `--upload-strict`).  
 - Tests: `test/reports_client.test.ts`.
 
-**Pendiente de producto:** desplegar staging del vendedor ([`docs/STAGING_DEPLOY.md`](./docs/STAGING_DEPLOY.md)), configurar secrets `CORECHECK_API_URL` + key en el cliente, y unificar License Plane + Reports Plane (hoy el template usa `--skip-license` cuando hay upload salvo `CORECHECK_REQUIRE_LICENSE=true`).
+**Pendiente de producto:** secrets `CORECHECK_API_URL` + key en repos **cliente**; unificar License Plane + Reports Plane (hoy el template usa `--skip-license` cuando hay upload salvo `CORECHECK_REQUIRE_LICENSE=true`).  
+**Staging vendedor:** Render + Neon vivos (`corecheck-api.onrender.com`) — ver [`docs/STAGING_DEPLOY.md`](./docs/STAGING_DEPLOY.md).  
+**Demos (comercial ≠ portafolio) + ficticios:** [`docs/SHOWCASE_AND_DEMOS.md`](./docs/SHOWCASE_AND_DEMOS.md).
 
 ### Slice 2 — Plataforma: Postgres + API Keys dinámicas (**adaptadores listos; activación prod pendiente**)
 

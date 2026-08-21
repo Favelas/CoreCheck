@@ -186,4 +186,5 @@ SSO, Redis, GitHub Checks, webhooks desde la API, field-level encryption, market
 
 **Invertir en activación, no en invención.** El repositorio ya contiene el motor, el contrato `CreateReportInput`, el cliente de ingestión, el aislamiento por `accountId`, la integridad HMAC, el Viewer con trends/diff, y los adaptadores Postgres. El siguiente dólar debe hacer que **cada corrida de un prospecto aterrice en el Control Plane**. Ese es el único movimiento que convierte un CLI excelente en un SaaS B2B cobrable.
 
-Detalle de ownership, guardrails y slices: [`FOUNDER.md`](./FOUNDER.md).
+Detalle de ownership, guardrails y slices: [`FOUNDER.md`](./FOUNDER.md).  
+Backlog de demos (comercial vs portafolio) y proyectos ficticios: [`docs/SHOWCASE_AND_DEMOS.md`](./docs/SHOWCASE_AND_DEMOS.md).
